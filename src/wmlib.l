@@ -1,0 +1,530 @@
+;; macros
+
+(declare (macros t))
+
+(def rascii
+ (macro (l) (car (exploden (cadr l)))))
+
+(def rctrl
+ (macro (l) (- (car (exploden (cadr l))) 64)))
+
+(def resc
+ (macro (l) (+ (car (exploden (cadr l))) 128)))
+
+;; window handler
+
+(def esc
+ (lexpr (n)
+  (prog (i)
+	(setq i 1)
+   aa   (cond ((= n 0) (return nil)))
+	(tyo 27)
+	(princ (arg i))
+	(setq i (1+ i))
+	(setq n (1- n))
+	(go aa))))
+
+(def wesc
+ (lexpr (n)
+  (prog (i)
+	(tyo 27)
+	(tyo (rascii \{))
+	(setq i 1)
+   aa   (cond ((= n 0) (return nil)))
+	(princ (arg i))
+	(setq i (1+ i))
+	(setq n (1- n))
+	(cond ((> n 1) (tyo (rascii \;))))
+	(go aa))))
+
+(declare (special $window $windows $raw))
+(setq $window 0)
+(setq $windows '((0 0 0 24 80 0)))
+(setq $raw nil)
+
+(def wraw
+ (lambda ()
+  (cond ((not $raw) (esc "(E" "(1R") (setq $raw t)))))
+
+(def wcooked
+ (lambda ()
+  (cond ($raw (esc "(R" "(1E") (setq $raw nil)))))
+
+(def wmake
+ (lambda (x y l c p)
+  (prog (w)
+	(setq w 1)
+   aa   (cond ((assoc w $windows) (setq w (1+ w)) (go aa)))
+	(setq $windows (cons (list w x y l c p) $windows))
+	(wesc w x (+ x c -1) y (+ y l -1) p "C")
+	(setq $window w)
+	(return w))))
+
+(def wdelete
+ (lambda (w)
+  (progn (cond ((null w) (setq w $window)))
+	 (setq $windows (wdelete1 w $windows))
+	 (wesc w "D")
+	 (cond ((equal w $window) (wesc "S") (setq $window 0))))))
+
+(def wdelete1
+ (lambda (w wl)
+  (cond ((null wl) nil)
+	((equal (caar wl) w) (cdr wl))
+	(t (cons (car wl) (wdelete1 w (cdr wl)))))))
+
+(def wselect
+ (lambda (w)
+  (cond ((null w) nil)
+	((not (equal w $window))
+	 (wesc w "S")
+	 (setq $window w)))))
+
+(def wprinc
+ (lambda (w l) (progn (wselect w) (princ l))))
+
+(def whprinc
+ (lambda (w l) (progn (wselect w) (esc "[7m") (princ l) (esc "[m"))))
+
+(def whighlight (lambda () (esc "[7m")))
+
+(def wlowlight (lambda () (esc "[m")))
+
+(def wterpri
+ (lambda (w) (progn (wselect w) (tyo 13) (tyo 10))))
+
+(def wcupos
+ (lambda (w x y)
+  (progn (wselect w)
+	 (tyo 27)
+	 (tyo (rascii \[))
+	 (princ (+ y 1))
+	 (tyo (rascii \;))
+	 (princ (+ x 1))
+	 (tyo (rascii \H)))))
+
+(def wcleol (lambda (w) (progn (wselect w) (esc "x"))))
+
+(def wcleos (lambda (w) (progn (wselect w) (esc "y"))))
+
+(def wcleop (lambda (w) (progn (wselect w) (esc "[3J"))))
+
+(def wclall (lambda (w) (progn (wselect w) (esc "[4J"))))
+
+(def wscroll
+ (lambda (w flg)
+  (cond (flg (wselect w) (esc "(11A"))
+	(t (wselect w) (esc "(9A")))))
+
+(def wlength
+ (lambda (w)
+  (prog (wi)
+	(setq wi (assoc w $windows))
+	(cond (wi (return (car (cddddr wi))))
+	      (t (return 80))))))
+
+(def wpull (lambda (w) (progn (wesc w "P") (setq $window w))))
+
+(def wpush (lambda (w) (progn (wesc w ";P") (setq $window w))))
+
+(def wheading
+ (lambda (w h)
+  (progn (wesc w "H")
+	 (tyo (rascii \"))
+	 (princ h)
+	 (tyo (rascii \")))))
+
+(def wlscroll
+ (lambda (w x)
+  (progn (cond ((eq x 'top) (wesc w ";s"))
+	       ((eq x 'bottom) (wesc w "s"))
+	       ((numberp x) (wesc w x ";s"))
+	       (t (setq w $window)))
+	 (setq $window w))))
+
+(def whold
+ (lambda (flg) (cond (flg (esc "(1D")) (t (esc "(D")))))
+
+;; window editor
+
+(declare (special $we-x			; cursor column position
+		  $we-y			; cursor raw position
+		  $we-pl		; reverse list of previous lines
+		  $we-fl		; list of following lines
+		  $we-pc		; reverse list of preceeding
+					; characters in the current line
+		  $we-fc		; list of following characters
+					; in the current line
+		  $we-kl		; killed lines (reversed)
+		  $we-l
+		  $we-c))
+(setq $we-x 0)
+(setq $we-y 0)
+(setq $we-pl nil)
+(setq $we-fl nil)
+(setq $we-pc nil)
+(setq $we-fc nil)
+(setq $we-kl nil)
+(setq $we-l 24)
+(setq $we-c 80)
+
+(def we-put-ch
+ (lambda (ch)
+  (progn (setq $we-pc (cons ch $we-pc))
+	 (setq $we-x (1+ $we-x))
+	 (we-out-l (1- $we-x) $we-y (cons ch $we-fc)))))
+
+(def we-put-nl
+ (lambda ()
+  (prog (l)
+	(setq l (reverse $we-pc))
+	(setq $we-pl (cons l $we-pl))
+	(setq $we-pc nil)
+	(setq $we-x 0)
+	(setq $we-y (1+ $we-y))
+	(cond ((< $we-y $we-l)
+	       (we-out-ls (1- $we-y) (cons l (cons $we-fc $we-fl))))
+	      (t (setq $we-y (1- $we-l))
+		 (we-out-s $we-y)))
+	(return nil))))
+
+(def we-rev-app
+ (lambda (x y)
+  (prog ()
+   aa   (cond ((null x) (return y)))
+	(setq y (cons (car x) y))
+	(setq x (cdr x))
+	(go aa))))
+
+(def we-out-s
+ (lambda (n)
+  (prog (l ll)
+	(setq ll (cons (we-rev-app $we-pc $we-fc) $we-fl))
+	(setq l $we-pl)
+   aa   (cond ((= n 0) (we-out-ls 0 ll) (return t))
+	      ((null l) (we-out-ls n ll) (return nil)))
+	(setq ll (cons (car l) ll))
+	(setq l (cdr l))
+	(setq n (1- n))
+	(go aa))))
+
+(def we-out-ls
+ (lambda (y ls)
+  (prog ()
+   aa   (cond ((>= y $we-l) (return nil))
+	      ((null ls) (wcleos nil) (return nil)))
+	(we-out-l 0 y (car ls))
+	(setq y (1+ y))
+	(setq ls (cdr ls))
+	(go aa))))
+
+(def we-out-l
+ (lambda (x y l)
+  (prog ()
+	(cond ((or (>= x $we-c) (>= y $we-l)) (return nil)))
+	(wcupos nil x y)
+   aa   (cond ((>= x $we-c) (return nil))
+	      ((null l) (wcleol nil) (return nil)))
+	(tyo (car l))
+	(setq x (1+ x))
+	(setq l (cdr l))
+	(go aa))))
+
+(def we-new
+ (lambda ()
+  (progn (setq $we-x 0)
+	 (setq $we-y 0)
+	 (setq $we-pl nil)
+	 (setq $we-fl nil)
+	 (setq $we-pc nil)
+	 (setq $we-fc nil)
+	 (setq $we-kl nil))))
+
+(def we-put
+ (lambda (ll)
+  (progn (setq $we-x 0)
+	 (setq $we-y 0)
+	 (setq $we-pl nil)
+	 (setq $we-fl (cdr ll))
+	 (setq $we-pc nil)
+	 (setq $we-fc (car ll))
+	 (setq $we-kl nil))))
+
+(def we-get
+ (lambda ()
+  (we-rev-app $we-pl (cons (we-rev-app $we-pc $we-fc) $we-fl))))
+
+(def we-forward
+ (lambda (n)
+  (prog (eom)
+   aa   (cond ((= n 0) (go bb))
+	      ($we-fc (setq $we-pc (cons (car $we-fc) $we-pc))
+		      (setq $we-fc (cdr $we-fc))
+		      (setq $we-x (1+ $we-x))
+		      (setq n (1- n))
+		      (go aa)))
+	(setq $we-pl (cons (reverse $we-pc) $we-pl))
+	(setq $we-pc nil)
+	(cond ($we-fl (setq $we-fc (car $we-fl))
+		      (setq $we-fl (cdr $we-fl)))
+	      (t (setq $we-fc nil) (setq eom t)))
+	(setq $we-x 0)
+	(setq $we-y (1+ $we-y))
+	(setq n (1- n))
+	(go aa)
+   bb   (cond ((>= $we-y $we-l) (setq $we-y (1- $we-l))
+				(we-out-s $we-y)))
+	(return eom))))
+
+(def we-backward
+ (lambda (n)
+  (prog (bom)
+   aa	(cond ((= n 0) (go bb))
+	      ($we-pc (setq $we-fc (cons (car $we-pc) $we-fc))
+		      (setq $we-pc (cdr $we-pc))
+		      (setq $we-x (1- $we-x))
+		      (setq n (1- n))
+		      (go aa))
+	      ((null $we-pl) (go bb)))
+	(setq $we-fl (cons $we-fc $we-fl))
+	(setq $we-fc nil)
+	(setq $we-pc (reverse (car $we-pl)))
+	(setq $we-pl (cdr $we-pl))
+	(setq $we-x (length $we-pc))
+	(setq $we-y (1- $we-y))
+	(setq n (1- n))
+	(go aa)
+   bb   (cond ((< $we-y 0) (setq $we-y 0) (we-out-s 0)))
+	(return bom))))
+
+(def we-delete
+ (lambda (n)
+  (prog (flag eom)
+   aa   (cond ((= n 0) (go bb))
+	      ($we-fc (setq $we-fc (cdr $we-fc))
+		      (setq n (1- n))
+		      (go aa))
+	      ($we-fl (setq $we-fc (car $we-fl))
+		      (setq $we-fl (cdr $we-fl))
+		      (setq n (1- n))
+		      (setq flag t)
+		      (go aa)))
+	(setq eom t)
+   bb   (we-out-l $we-x $we-y $we-fc)
+	(cond (flag (we-out-ls (1+ $we-y) $we-fl)))
+	(return eom))))
+
+(def we-delete-back
+ (lambda (n)
+  (prog (bom flag)
+   aa   (cond ((= n 0) (go bb))
+	      ($we-pc (setq $we-pc (cdr $we-pc))
+		      (setq $we-x (1- $we-x))
+		      (setq n (1- n))
+		      (go aa))
+	      ($we-pl (setq $we-y (1- $we-y))
+		      (setq $we-x (length (car $we-pl)))
+		      (setq $we-pc (reverse (car $we-pl)))
+		      (setq $we-pl (cdr $we-pl))
+		      (setq n (1- n))
+		      (setq flag t)
+		      (go aa)))
+	(setq bom t)
+   bb   (cond ((not flag) (we-out-l $we-x $we-y $we-fc))
+	      (t (setq $we-y (max $we-y 0))
+		 (we-out-s $we-y)))
+	(return bom))))
+
+(def we-previous
+ (lambda (n x)
+  (prog (bom flag)
+	(setq $we-fl (cons (we-rev-app $we-pc $we-fc) $we-fl))
+   aa   (cond ((= n 0) (go bb))
+	      ((null $we-pl) (setq bom t) (go bb)))
+	(setq $we-fl (cons (car $we-pl) $we-fl))
+	(setq $we-pl (cdr $we-pl))
+	(setq n (1- n))
+	(setq $we-y (1- $we-y))
+	(go aa)
+   bb   (setq $we-fc (car $we-fl))
+	(setq $we-pc nil)
+	(setq $we-fl (cdr $we-fl))
+	(setq $we-x 0)
+   cc   (cond ((or (= x 0) (null $we-fc)) (go dd)))
+	(setq $we-pc (cons (car $we-fc) $we-pc))
+	(setq $we-fc (cdr $we-fc))
+	(setq $we-x (1+ $we-x))
+	(setq x (1- x))
+	(go cc)
+   dd   (cond ((< $we-y 0) (setq $we-y 0) (we-out-s 0)))
+	(return bom))))
+
+(def we-next
+ (lambda (n x vflag)
+  (prog (eom)
+	(setq $we-pl (cons (we-rev-app $we-pc $we-fc) $we-pl))
+   aa   (cond ((= n 0) (go bb))
+	      ((null $we-fl) (setq eom t) (go bb)))
+	(setq $we-pl (cons (car $we-fl) $we-pl))
+	(setq $we-fl (cdr $we-fl))
+	(setq n (1- n))
+	(setq $we-y (1+ $we-y))
+	(go aa)
+   bb   (setq $we-x 0)
+	(setq $we-fc (car $we-pl))
+	(setq $we-pc nil)
+	(setq $we-pl (cdr $we-pl))
+   cc   (cond ((or (= x 0) (null $we-fc)) (go dd)))
+	(setq $we-pc (cons (car $we-fc) $we-pc))
+	(setq $we-fc (cdr $we-fc))
+	(setq $we-x (1+ $we-x))
+	(setq x (1- x))
+	(go cc)
+   dd   (cond ((>= $we-y $we-l)
+	       (cond (vflag (setq $we-y 0))
+		     (t (setq $we-y (1- $we-l))))
+	       (we-out-s $we-y)))
+	(return eom))))
+
+(def we-end-line
+ (lambda ()
+  (progn (setq $we-pc (we-rev-app $we-fc $we-pc))
+	 (setq $we-fc nil)
+	 (setq $we-x (length $we-pc)))))
+
+(def we-beginning-line
+ (lambda ()
+  (progn (setq $we-x 0)
+	 (setq $we-fc (we-rev-app $we-pc $we-fc))
+	 (setq $we-pc nil))))
+
+(def we-kill
+ (lambda (n)
+  (prog (flag eom)
+   aa	(cond ((= n 0) (go bb))
+	      ($we-fc (setq $we-kl (cons $we-fc $we-kl))
+		      (setq $we-fc nil)
+		      (setq n (1- n))
+		      (go aa))
+	      ($we-fl (setq flag t)
+		      (setq $we-kl (cons 'nl $we-kl))
+		      (setq $we-fc (car $we-fl))
+		      (setq $we-fl (cdr $we-fl))
+		      (setq n (1- n))
+		      (go aa)))
+	(setq eom t)
+   bb   (we-out-l $we-x $we-y $we-fc)
+	(cond (flag (we-out-ls (1+ $we-y) $we-fl)))
+	(return eom))))
+
+(def we-yank
+ (lambda ()
+  (prog (flag ls)
+	(setq ls (reverse $we-kl))
+   aa   (cond ((null ls) (go bb))
+	      ((eq (car ls) 'nl)
+	       (setq $we-y (1+ $we-y))
+	       (setq $we-pl (cons (reverse $we-pc) $we-pl))
+	       (setq $we-pc nil))
+	      (t (setq $we-pc (we-rev-app (car ls) $we-pc))))
+	(setq ls (cdr ls))
+	(go aa)
+   bb   (setq $we-y (min $we-y (1- $we-l)))
+	(setq $we-x (length $we-pc))
+	(we-out-s $we-y))))
+
+(def wedit
+ (lambda (w)
+  (prog (wi ch pch x uarg luarg flg npl)
+	(setq wi (assoc w $windows))
+	(cond ((null wi) (return nil)))
+	(setq $we-l (cadddr wi))
+	(setq $we-c (car (cddddr wi)))
+	(setq $we-x (length $we-pc))
+	(setq $we-y (min (/ $we-l 2) (length $we-pl)))
+	(esc "(0S")
+	(wraw)
+	(wselect w)
+	(we-out-s $we-y)
+   aa   (cond ((>= $we-x $we-c) (setq x (1- $we-c)))
+	      (t (setq x $we-x)))
+	(wcupos nil x $we-y)
+	(setq uarg 1)
+	(setq pch ch)
+	(setq ch (tyi))
+   bb	(cond ((= ch 27)
+	       (setq ch (tyi))
+	       (cond ((and (<= (rascii a) ch) (<= ch (rascii z)))
+		      (setq ch (- ch 32))))
+	       (setq ch (+ ch 128))))
+	(cond ((= ch (resc A)) (setq ch (rctrl P)))
+	      ((= ch (resc B)) (setq ch (rctrl N)))
+	      ((= ch (resc C)) (setq ch (rctrl F)))
+	      ((= ch (resc D)) (setq ch (rctrl B)))
+	      ((= ch (resc 0)) (setq ch (rctrl Z))))
+	(cond ((and (<= 32 ch) (< ch 127)) (we-put-ch ch))
+	      ((or (= ch 10) (= ch 13)) (we-put-nl))
+	      ((= ch (rctrl F)) (we-forward uarg))
+	      ((= ch (rctrl B)) (we-backward uarg))
+	      ((= ch (rctrl D)) (we-delete uarg))
+	      ((or (= ch (rctrl H)) (= ch 127)) (we-delete-back uarg))
+	      ((= ch (rctrl P))
+	       (cond ((not (or (= pch (rctrl P)) (= pch (rctrl N))))
+		      (setq npl $we-x)))
+	       (we-previous uarg npl))
+	      ((= ch (rctrl N))
+	       (cond ((not (or (= pch (rctrl P)) (= pch (rctrl N))))
+		      (setq npl $we-x)))
+	       (we-next uarg npl nil))
+	      ((= ch (rctrl A)) (we-beginning-line))
+	      ((= ch (rctrl E)) (we-end-line))
+	      ((= ch (rctrl K))
+	       (cond ((not (= pch (rctrl K))) (setq $we-kl nil)))
+	       (we-kill uarg))
+	      ((= ch (rctrl Y)) (we-yank))
+	      ((= ch (rctrl V)) (we-next (- $we-l $we-y) 0 t))
+	      ((= ch (resc V)) (we-previous (+ $we-y $we-l) 0))
+	      ((= ch (resc |<|)) (we-previous (1+ (length $we-pl)) 0))
+	      ((= ch (resc |>|)) (we-next (1+ (length $we-fl)) 0 nil))
+	      ((= ch (rctrl C)) (esc "(26S") (return ch))
+	      ((= ch (rctrl Z)) (esc "(26S") (return ch))
+	      ((= ch (rctrl U)) (go cc)))
+	(go aa)
+   cc   (setq luarg 0)
+	(setq flg nil)
+   dd   (setq ch (tyi))
+	(cond ((and (<= (rascii 0) ch) (<= ch (rascii 9)))
+	       (setq flg t)
+	       (setq luarg (+ (* luarg 10) (- ch (rascii 0))))
+	       (go dd))
+	      ((null flg) (setq luarg 4)))
+	(setq uarg (* uarg luarg))
+	(go bb))))
+
+;;
+
+(def wtoplevel
+ (lambda ()
+  (prog (l)
+	(esc "{S" "(R" "(1E")
+   aa   (tyo 13)
+	(princ "=> ")
+	(setq l (car (errset (top-read nil top-level-eof))))
+	(cond ((eq top-level-eof l)
+	       (terpri)
+	       (princ "[Return to system top level]")
+	       (terpri)
+	       (setq user-top-level nil)
+	       (return nil)))
+   bb   (cond ((not (= (tyi) 10)) (go bb)))
+	(cond ($raw (esc "(E" "(1R")))
+	(wesc $window "S")
+	(setq l (errset (eval l)))
+	(esc "{S")
+	(cond ($raw (esc "(R" "(1E")))
+	(cond ((atom l) (errset (error l) t))
+	      (t (top-print (car l))))
+	(terpri)
+	(go aa))))
+
+

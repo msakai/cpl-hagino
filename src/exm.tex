@@ -1,0 +1,184 @@
+\documentstyle[a4,12pt]{article}
+\begin{document}
+\begin{verbatim}
+% lcat
+Categorical Programming Language (version 3)
+cpl>help
+edit    input or edit objects and morphisms
+show    show objects and morphisms
+delete  delete objects and morphisms
+let     define morphisms
+simp    simplify morphisms
+expand  expand auxiliary morphisms
+new     clear old definitions
+read    read file
+load    load saved file
+save    save definitions onto file
+diagram diagram editor
+set     set flags
+scroll  scroll show window
+alias   set aliases
+keypad  set keypad
+help    print help message
+quit    quit the system
+cpl>edit
+| right object 1 with !
+| end object;
+productive right object 1 defined
+cpl>edit
+| right object prod(a,b) with pair is
+|   pi1: prod -> a
+|   pi2: prod -> b
+| end object;
+productive right object prod(+,+) defined
+cpl>edit
+| right object exp(a,b) with curry is
+|   ev: prod(exp,a) -> b
+| end object;
+productive right object exp(-,+) defined
+cpl>edit
+| left object nat with pr is
+|   0: 1 -> nat
+|   s: nat -> nat
+| end object;
+left object nat defined
+cpl>let add=ev.pair(pr(curry(pi2),curry(s.ev)).pi1,pi2)
+add : prod(nat,nat) -> nat defined
+cpl>simp add.pair(s.0,s.s.0)
+s.s.s.0
+    :1 -> nat
+cpl>set trace on
+cpl>set print 10
+cpl>simp add.pair(s.0,s.s.0)
+0:add.pair(s.0,s.s.0)*
+1:add*pair(s.0,s.s.0)
+2:ev.pair(pr(curry(pi2),curry(s.ev)).pi1,pi2)*pair(s.0,s.s.0)
+3:ev*pair(pr(curry(pi2),curry(s.ev)).pi1,pi2).pair(s.0,s.s.0)
+4[1]:pr(curry(pi2),curry(s.ev)).pi1.pair(s.0,s.s.0)*
+5[1]:pr(curry(pi2),curry(s.ev)).pi1*pair(s.0,s.s.0)
+6[1]:pr(curry(pi2),curry(s.ev)).s.0*id
+7[1]:pr(curry(pi2),curry(s.ev)).s*0
+8[1]:pr(curry(pi2),curry(s.ev))*s.0
+9[1]:curry(s.ev).pr(curry(pi2),curry(s.ev))*0
+10[1]:curry(s.ev).curry(pi2).!*
+11[1]:curry(s.ev).curry(pi2)*!
+12[1]:curry(s.ev)*curry(pi2).!
+13[1]:*curry(s.ev).curry(pi2).!
+14:s.ev*pair(curry(pi2).!,pi2.pair(s.0,s.s.0))
+15[1]:curry(pi2).!*
+16[1]:curry(pi2)*!
+17[1]:*curry(pi2).!
+18:s.pi2*pair(!,pi2.pair(s.0,s.s.0))
+19:s.pi2.pair(s.0,s.s.0)*id
+20:s.pi2*pair(s.0,s.s.0)
+21:s.s.s.0*id
+22:s.s.s*0
+23:s.s*s.0
+24:s*s.s.0
+25:*s.s.s.0
+s.s.s.0
+    :1 -> nat
+cpl>set trace off
+cpl>edit
+| left object list(a) with prl is
+|   nil: 1 -> list
+|   cons: prod(a,list) -> list
+| end object;
+left object list(+) defined
+cpl>let seq=pi2.pr(pair(0,nil),pair(s.pi1,cons))
+seq : nat -> list(nat) defined
+cpl>simp seq.s.s.s.0
+cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+    :1 -> list(nat)
+cpl>simp full seq.s.s.s.0
+cons.pair(s.s.0.!,cons.pair(s.0.!,cons.pair(0.!,nil.!)))
+    :1 -> list(nat)
+cpl>simp seq.s
+cons.pr(pair(0,nil),pair(s.pi1,cons))
+    :nat -> list(nat)
+cpl>edit
+| left object coprod(a,b) with case is
+|   in1: a -> coprod
+|   in2: b -> coprod
+| end object;
+coproductive left object coprod(+,+) defined
+cpl>let head=prl(in2,in1.pi1)
+head : list(*a) -> coprod(*a,1) defined
+cpl>simp seq.s.s.s.0
+cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+    :1 -> list(nat)
+cpl>simp head.it
+in1.s.s.0.!
+    :1 -> coprod(nat,1)
+cpl>edit
+| right object inf_list(a) with fold is
+|   hd: inf_list -> a
+|   tl: inf_list -> inf_list
+| end object;
+right object inf_list(+) defined
+cpl>let inc_seq=fold(id,s).0
+inc_seq : 1 -> inf_list(nat) defined
+cpl>simp hd.inc_seq;
+0
+    :1 -> nat
+cpl>simp hd.tl.tl.tl.inc_seq;
+s.s.s.0
+    :1 -> nat
+cpl>quit
+bye
+%
+\end{verbatim}
+\scriptsize
+\begin{verbatim}
+,DIAGRAM EDITOR-------------------------------------------------,,OBJECT------,
+|prod(nat,nat) -> nat                                           ||nat         |
+|given by composing                                             ||bool        |
+|  prod(nat,nat) -> prod(exp(nat,nat),nat)                      ||coprod      |
+|  given by factorizer pair                                     ||exp         |
+|    prod(nat,nat) -> exp(nat,nat)                              ||prod        |
+|    given by composing                                         ||1           |
+|      prod(nat,nat) -> nat                                     ||            |
+|      given by pi1                                             ||            |
+|    and                                                        ||            |
+|      nat -> exp(nat,nat)                                      ||            |
+|      given by factorizer pr                                   ||            |
+|        1 -> exp(nat,nat)                                      ||            |
+|        given by factorizer curry                              ||            |
+|          prod(1,nat) -> nat                                   ||            |
+|          given by pi2                                         ||            |
+|      and                                                      ||            |
+`---------------------------------------------------------------'`------------'
+,COMMAND----------------------------------------------------------------------,
+|Categorical Programming Language (version 3)                                 |
+|cpl>load Nat.save                                                            |
+|cpl>diagram add                                                              |
+|                                                                             |
+`-----------------------------------------------------------------------------'
+\end{verbatim}
+\begin{verbatim}
+,SHOW-----------------------------------------------------------,,OBJECT------,
+|11[1]:curry(s.ev).curry(pi2)*!                                 ||nat         |
+|12[1]:curry(s.ev)*curry(pi2).!                                 ||bool        |
+|13[1]:*curry(s.ev).curry(pi2).!                                ||coprod      |
+|14:s.ev*pair(curry(pi2).!,pi2.pair(s.0,s.s.0))                 ||exp         |
+|15[1]:curry(pi2).!*                                            ||prod        |
+|16[1]:curry(pi2)*!                                             ||1           |
+|17[1]:*curry(pi2).!                                            ||            |
+|18:s.pi2*pair(!,pi2.pair(s.0,s.s.0))                           ||            |
+|19:s.pi2.pair(s.0,s.s.0)*id                                    ||            |
+|20:s.pi2*pair(s.0,s.s.0)                                       ||            |
+|21:s.s.s.0*id                                                  ||            |
+|22:s.s.s*0                                                     ||            |
+|23:s.s*s.0                                                     ||            |
+|24:s*s.s.0                                                     ||            |
+|25:*s.s.s.0                                                    ||            |
+|                                                               ||            |
+`---------------------------------------------------------------'`------------'
+,COMMAND----------------------------------------------------------------------,
+|cpl>simp add.pair(s.0,s.s.0)                                                 |
+|s.s.s.0                                                                      |
+|    :1 -> nat                                                                |
+|cpl>                                                                         |
+`-----------------------------------------------------------------------------'
+\end{verbatim}
+\end{document}

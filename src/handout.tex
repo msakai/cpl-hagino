@@ -1,0 +1,588 @@
+\batchmode
+\documentstyle[11pt]{article}
+\addtolength{\textheight}{1.5in}
+\addtolength{\textwidth}{1.5in}
+\addtolength{\oddsidemargin}{-.5in}
+\addtolength{\evensidemargin}{-.5in}
+\begin{document}
+\begin{center}
+\begin{LARGE}
+Categorical Programming Language \\[1em]
+\end{LARGE}
+September 1985 \\[1em]
+Tatsuya Hagino \\[1em]
+\begin{small}
+Department of Computer Science \\
+University of Edinburgh \\
+James Clerk Maxwell Building \\
+The King's Buildings \\
+Mayfield Road \\
+Edinburgh EH9 3JZ
+\end{small}
+\end{center}
+
+\section{Introduction}
+
+This note briefly explains what {\it Categorical Programming Language}
+(`CPL' for short) is and its system which is implemented on VAX UNIX 4.2.
+One of the main features of CPL is its declaration mechanism for data types.
+
+\begin{enumerate}
+\item CPL uses categorical characterizations of data types.  For example,
+product $A\times B$ is characterized by giving two units, $\pi_{1}{\rm
+:}A\times B\longrightarrow A$ and $\pi_{2}{\rm :}A\times B\longrightarrow
+B$, having the universal property that for any two morphisms, $f{\rm
+:}C\longrightarrow A$ and $g{\rm :}C\longrightarrow B$, there exists a
+unique morphism $h {\rm :}C\longrightarrow A\times B$ such that $\pi_{1}\circ
+h = f$ and $\pi_{2}\circ h = g$.
+
+\item CPL has no primitive data types.  Ordinary programming languages
+(e.g.\ Pascal, Lisp, ML) have primitive data types: natural number, list,
+record (i.e.\ product), disjoint record (i.e.\ coproduct) and so on, but CPL
+can define these data types.  Thus, CPL is analogous to algebraic
+specification methods which can specify algebras like natural number and
+list.  However they cannot specify higher order data types (e.g.\
+exponentiation) easily, nor can they specify product without using equations
+(connecting projection and pairing operations).
+
+\item CPL can not only define a product without equations, but also can
+define a function space which is categorically characterized as
+exponentiation.  Furthermore, although its use is still questionable, right
+adjoint of exponentiation can be defined as well.
+
+\item CPL is symmetric in the sense that it allows one to define data types by
+both initial and terminal data constraints.  This is not the case with
+algebraic specification methods.
+
+\item As a result of this symmetry, CPL can define final co-algebras, which
+includes objects like infinite lists.
+
+\item CPL defines functors.  Algebraic specification methods usually
+introduce parametrization later, but in CPL functorial behaviour of
+parametrized data types plays an important roll.
+\end{enumerate}
+
+Algebraic specification methods specify algebras, whereas CPL specifies
+categories.  A CPL specification consists of a series of object
+declarations.  Each object declaration specifies a functor, some associated
+natural transformations and some universal property.  A model of a CPL
+specification is a category with the specified functors and natural
+transformations satisfying the specified universal properties.  For example,
+if a specification consists of one object declaration which introduces a
+binary functor `prod' with two natural transformations (i.e.\ its
+projections) and the universal property of which is that {\it `prod' is the
+right adjoint functor of the diagonal functor}, a model of the specification
+is a category ${\cal C}$ with product and `prod' should be interpreted as
+the product functor ${\cal C} \times {\cal C} \longrightarrow {\cal C}$.
+
+By defining suitable morphisms between models, models of a specification
+form a category.  If a specification is enriched by object declarations, the
+category of models of the enriched specification is a sub-category of the
+category of models of the original specification.  When CPL starts, an empty
+specification is given, so that the category of models is the category of
+categories, and by declaring objects the category of models becomes smaller
+and smaller, e.g.\ the category of categories, the category of
+product categories, the category of cartesian closed categories, $\ldots$.
+
+A simplified object declaration in CPL looks like:
+\begin{quote}
+right object $O(a)$ with $\psi$ is \\
+\makebox[2em]{} $u$ : $F(a,O)$ $\longrightarrow$ $G(a,O)$ \\
+end object \\
+\end{quote}
+where $F$ and $G$ are binary functors which have already been specified.
+The specification is enriched with a unary functor $O$ and a natural
+transformation $u$ from $F(a,O(a))$ to $G(a,O(a))$ (we call $u$ unit
+morphism).  The universal property is: for any morphism $f{\rm
+:}F(a,b)\longrightarrow G(a,b)$, there exists a unique morphism $h {\rm :} b
+ \longrightarrow O(a)$ such that the following diagram commutes:
+\begin{displaymath}
+\begin{array}{rcccl}
+& & f & & \\
+& F(a,b) & \longrightarrow & G(a,b) & \\
+F(a,h) & {\Big\downarrow} & & {\Big\downarrow} & G(a,h) \\
+& F(a,O(a)) & \longrightarrow & G(a,O(a)) & \\
+& & u & & \\
+\end{array}
+\end{displaymath}
+For the moment we have assumed that $F$ and $G$ are covariant in their second
+argument.  $\psi$ in the declaration is called the `factorizer' and is used
+to denote the unique arrow, i.e.\ $h$ is denoted as $\psi (f)$.
+
+The universal property is equivalent to the following equations:
+\begin{displaymath}
+\begin{array}{l}
+\psi (u) = id_{O(a)} \\
+u\circ F(a,\psi (f)) = G(a,\psi (f))\circ f \\
+\psi (f)\circ g = \psi (h) \\
+\makebox[5em]{} {\rm where} \; f\circ F(a,g) = G(a,g)\circ h \\
+O(f) = \psi (G(f,O(a))\circ u\circ F(f,O(a)) \\
+\end{array}
+\end{displaymath}
+The functor $O$ may not necessary be covariant in its argument.  It depends
+on the variance of $F$ and $G$.
+
+In the declaration above, we used keyword `right', which indicates that $O$
+has characteristics of right adjoint or the terminal object.  We can replace
+`right' with `left' getting a functor which has characteristics of left
+adjoint or the initial object.
+\begin{quote}
+left object $\hat{O}(a)$ with $\hat{\psi}$ is \\
+\makebox[2em]{} $\hat{u}$ : $\hat{F}(a,\hat{O})$ $\longrightarrow$
+	$\hat{G}(a,\hat{O})$ \\
+end object \\
+\end{quote}
+For any morphism $f{\rm :}\hat{F}(a,b)\longrightarrow \hat{G}(a,b)$, there
+exists a unique morphism denoted by $\hat{\psi}(f)$ from $\hat{O}(a)$ to $b$
+such that the following diagram commutes:
+\begin{displaymath}
+\begin{array}{rcccl}
+& & \hat{u} & & \\
+& \hat{F}(a,\hat{O}(a)) & \longrightarrow & \hat{G}(a,\hat{O}(a)) & \\
+\hat{F}(a,\hat{\psi}(f)) & {\Big\downarrow} & & {\Big\downarrow} &
+	\hat{G}(a,\hat{\psi}(f)) \\
+& \hat{F}(a,b) & \longrightarrow & \hat{G}(a,b) & \\
+& & f & & \\
+\end{array}
+\end{displaymath}
+The equations equivalent to the universal property are:
+\begin{displaymath}
+\begin{array}{l}
+\hat{\psi}(\hat{u}) = id_{\hat{O}(a)} \\
+\hat{G}(a,\hat{\psi}(f))\circ \hat{u} = f\circ \hat{F}(a,\hat{\psi}(f)) \\ 
+g\circ \hat{\psi}(f) = \hat{\psi}(h) \\
+\makebox[5em]{} {\rm where} \; \hat{G}(a,g)\circ f = h\circ \hat{F}(a,g) \\
+\hat{O}(f) = \hat{\psi}(\hat{G}(f,\hat{O}(a))\circ \hat{u}\circ
+	\hat{F}(f,\hat{O}(a)) \\
+\end{array}
+\end{displaymath}
+
+In general an object declaration in CPL can define a functor of many
+variables (including nullary functors) and can also have any number of unit
+morphisms.
+
+
+\section{Examples of Object Declarations}
+
+Since there are no primitive data types pre-declared in CPL, the first thing
+we normally have to do is to define the terminal object.  It can be done by
+declaring `\verb"1"' as follows.
+\begin{quote}
+\begin{verbatim}
+right object 1 with !
+end object
+\end{verbatim}
+\end{quote}
+It does not have any unit morphisms.  By the characterization in the
+previous section, there exists a unique morphism denoted by `\verb"!"' from
+any object $a$ to `\verb"1"'.  Therefore `\verb"1"' really specifies the
+terminal object.
+
+Next, we define product by:
+\begin{quote}
+\begin{verbatim}
+right object prod(a,b) with pair is
+  pi1: prod -> a
+  pi2: prod -> b
+end object
+\end{verbatim}
+\end{quote}
+Note that in this case $F$ and $G$ are projection functors.  There are two
+unit morphisms, \verb"pi1:prod(a,b)->a" and \verb"pi2:prod(a,b)->b".  For
+any morphisms \verb"f:c->a" and \verb"g:c->b" factorizer `\verb"pair"' gives
+a unique morphism \verb"pair(f,g):c->prod(a,b)" such that the following
+equations hold.
+\begin{quote}
+\begin{verbatim}
+pair(pi1,pi2) = id
+pi1.pair(f,g) = f
+pi2.pair(f,g) = g
+pair(f,g).h = pair(f.h,g.h)
+prod(f,g) = pair(f.pi1,g.pi2)
+\end{verbatim}
+\end{quote}
+Note that `\verb"id"' is the identity morphism and \verb"f.g" denotes the
+composition of morphisms \verb"f" and \verb"g" (for \verb"f:b->c" and
+ \verb"g:a->b", \verb"f.g:a->c".  Alternatively it can be written as
+ \verb"g|f").
+
+In order to do certain calculations, categories often need to be cartesian
+closed.  We define exponentiation in CPL as follows:
+\begin{quote}
+\begin{verbatim}
+right object exp(a,b) with curry
+  ev: prod(exp,a) -> b
+end object
+\end{verbatim}
+\end{quote}
+For any morphism \verb"f:prod(c,a)->b", \verb"curry(f)" is from \verb"c" to
+ \verb"exp(a,b)", and the following equations hold:
+\begin{quote}
+\begin{verbatim}
+curry(ev) = id
+ev.prod(curry(f),id) = f
+curry(f).g = curry(f.prod(id,g))
+exp(f,g) = curry(g.ev.prod(id,f))
+\end{verbatim}
+\end{quote}
+
+We have defined three right objects (or functors) which makes the category
+cartesian closed.  Now we define some left objects.  The object \verb"nat"
+the elements of which are natural numbers can de defined as follows:
+\begin{quote}
+\begin{verbatim}
+left object nat with pr is
+  0: 1 -> nat
+  s: nat -> nat
+end object
+\end{verbatim}
+\end{quote}
+The universal property in the previous section gives the usual
+characterization of a natural number object in category theory.  For any
+ \verb"f:1->a" and \verb"g:a->a", \verb"pr(f,g)" is from \verb"nat" to
+ \verb"a", and the following equations hold:
+\begin{quote}
+\begin{verbatim}
+pr(0,s) = id
+pr(f,g).0 = f
+pr(f,g).s = g.pr(f,g)
+h.pr(f,g) = pr(h.f,k)
+\end{verbatim}
+\end{quote}
+where \verb"k" is a morphism satisfying \verb"h.g = k.h".  As is well known,
+\verb"pr" gives the power of defining primitive recursive functions.  For
+example, a morphism which adds two natural numbers can be defined by:
+\begin{quote}
+\begin{verbatim}
+ev.pair(pr(curry(pi2),curry(s.ev)).pi1,pi2)
+\end{verbatim}
+\end{quote}
+
+Similarly, we can define any non-equational initial algebras.  For example,
+the object \verb"list(a)" an element of which is a list of \verb"a" elements
+can be defined by:
+\begin{quote}
+\begin{verbatim}
+left object list(a) with prl is
+  nil: 1 -> list
+  cons: prod(a,list) -> list
+end object
+\end{verbatim}
+\end{quote}
+In initial algebraic specification methods, `list' is usually declared with
+list destructors like `head' and `tail' and they should be connected to the
+constructors `nil' and `cons' by equations.  In CPL, `head' and `tail' can
+be introduced by using factorizer \verb"prl" (short for primitive recursion
+on list).
+\begin{quote}
+\begin{verbatim}
+head=prl(in2,in1.pi1)
+tail=case(in1.pi2,in2).prl(in2,in1.pair(pi1,case(cons,nil).pi2))
+\end{verbatim}
+\end{quote}
+
+As we said in the previous section that CPL is symmetric, we can define any
+non-equational final co-algebras.  As an example, we define the object
+ \verb"inf_list(a)" an element of which is an infinite list of \verb"a"
+elements.
+\begin{quote}
+\begin{verbatim}
+right object inf_list(a) with fold is
+  hd: inf_list -> a
+  tl: inf_list -> inf_list
+end object;
+\end{verbatim}
+\end{quote}
+For any \verb"f:b->a" and \verb"g:b->b", \verb"fold(f,g)" is from \verb"b"
+to \verb"inf_list(a)" satisfying the following equations.
+\begin{quote}
+\begin{verbatim}
+fold(hd,tl) = id
+hd.fold(f,g) = f
+tl.fold(f,g) = fold(f,g).g
+fold(f,g).h = fold(f.h,k)    where g.h = h.k
+\end{verbatim}
+\end{quote}
+
+As the dual of \verb"nat", a co-natural number object is given by:
+\begin{quote}
+\begin{verbatim}
+right object co_nat with co_pr is
+  p: co_nat -> coprod(1,co_nat)
+end object
+\end{verbatim}
+\end{quote}
+where \verb"coprod" gives coproduct of two objects defined as the dual of
+ \verb"prod".  Unit morphism \verb"p" gives a predecessor function of
+ \verb"co_nat".  For any \verb"f:a->coprod(1,a)", \verb"co_pr(f)" is from
+ \verb"a" to \verb"co_nat" satisfying equations:
+\begin{quote}
+\begin{verbatim}
+co_pr(p) = id
+p.co_pr(f) =  co_prod(id,co_pr(f)).f
+co_pr(f).g = co_pr(h)        where f.g = coprod(id,g).h
+\end{verbatim}
+\end{quote}
+
+
+\section{Reduction Rules}
+
+So far we have only seen the declaration mechanism for data types in CPL.
+What is a program in CPL?  A CPL program is given as a morphism (or a term,
+which is its syntactic representation) which is a composition of unit
+morphisms, factorizers and functors (in fact functors are automatically
+expanded into the equivalent terms involving factorizers by the system).
+Then, what does CPL calculate?  Given a term, CPL simplifies it by using the
+reduction rules which will be explained in this section.
+
+Declaring objects in CPL gives equations which should be satisfied in a
+model.
+
+\begin{displaymath}
+\begin{tabular}{ll}
+\begin{tabular}{l}
+right object $O(a)$ with $\psi$ is \\
+\makebox[2em]{} $u$ : $F(a,O)$ $\longrightarrow$ $G(a,O)$ \\
+end object \\
+\end{tabular}
+&
+\begin{tabular}{l}
+left object $\hat{O}(a)$ with $\hat{\psi}$ is \\
+\makebox[2em]{} $\hat{u}$ : $\hat{F}(a,\hat{O})$ $\longrightarrow$
+	$\hat{G}(a,\hat{O})$ \\
+end object \\
+\end{tabular}
+\\
+\begin{tabular}{l}
+$\psi (u) = id_{O(a)}$ \\
+$u\circ F(a,\psi (f)) = G(a,\psi (f))\circ f$ \\
+$\psi (f)\circ g = \psi (h)$ \\
+\makebox[5em]{} where $f\circ F(a,g) = G(a,g)\circ h$ \\
+$O(f) = \psi (G(f,O(a))\circ u\circ F(f,O(a))$ \\
+\end{tabular}
+&
+\begin{tabular}{l}
+$\hat{\psi}(\hat{u}) = id_{\hat{O}(a)}$ \\
+$\hat{G}(a,\hat{\psi}(f))\circ \hat{u} = f\circ \hat{F}(a,\hat{\psi}(f))$ \\
+$g\circ \hat{\psi}(f) = \hat{\psi}(h)$ \\
+\makebox[5em]{} where $\hat{G}(a,g)\circ f = h\circ \hat{F}(a,g)$ \\
+$\hat{O}(f) = \hat{\psi}(\hat{G}(f,\hat{O}(a))\circ \hat{u}\circ
+	\hat{F}(f,\hat{O}(a))$ \\
+\end{tabular}
+\end{tabular}
+\end{displaymath}
+
+From these equations, CPL uses the following reduction rules to simplify
+terms.
+\begin{displaymath}
+\begin{array}{c}
+<g,c> \Longrightarrow c' \makebox[4em]{} <f,c'> \Longrightarrow c'' \\
+\hline
+<f\circ g,c> \Longrightarrow c''\\
+\end{array}
+\end{displaymath}
+\begin{displaymath}
+\begin{array}{c}
+<id,c> \Longrightarrow c \\
+\end{array}
+\end{displaymath}
+\begin{displaymath}
+\begin{array}{c}
+<\hat{u},c> \Longrightarrow \hat{u}\circ c \\
+\end{array}
+\end{displaymath}
+\begin{displaymath}
+\begin{array}{c}
+<\psi (f),c> \Longrightarrow \psi(f)\circ c \\
+\end{array}
+\end{displaymath}
+\begin{displaymath}
+\begin{array}{c}
+<f\circ \hat{F}(id,\hat{\psi}(f)),c> \Longrightarrow c' \\
+\hline
+<\hat{G}(id,\hat{\psi}(f)),\hat{u}\circ c> \Longrightarrow
+	c' \\
+\end{array}
+\end{displaymath}
+\begin{displaymath}
+\begin{array}{c}
+<G(id,\psi (f))\circ f,c> \Longrightarrow c' \\
+\hline
+<u,F(id,\psi (f))\circ c> \Longrightarrow c' \\
+\end{array}
+\end{displaymath}
+
+The reduction rules try to reduce a term to a composition of co-units (unit
+morphisms associated with left objects) and right factorizers.  In order to
+apply the last two reduction rules, $F$ and $\hat{G}$ should be restricted
+to `productive' and `coproductive', respectively, in the second argument,
+where a right object $O(a)$ is productive in $a$ if $G(a,O)$ is simply $a$
+and $F(a,O)$ does not depend on $a$ and is productive in $O$.
+ \verb"prod(a,b)" is productive in both arguments and \verb"exp(a,b)" is
+productive in \verb"b".  The condition being `coproductive' can be defined
+dually.
+
+The reduction rules cannot reduce an arbitrary term to a canonical one, but
+they do when the given term is ground (i.e.\ a term form the terminal
+object) and its codomain corresponds to an algebra (e.g.\ natural number).
+
+
+\section{Examples of Reduction}
+
+Let us see some reductions done in CPL.  We have defined a morphism adding
+two natural numbers.  Let us try $1+2$.
+\begin{quote}
+\begin{verbatim}
+cpl>let add=ev.pair(pr(curry(pi2),curry(s.ev)).pi1,pi2)
+add : prod(nat,nat) -> nat defined
+cpl>simp add.pair(s.0,s.s.0)
+0:add.pair(s.0,s.s.0)*
+1:add*pair(s.0,s.s.0)
+2:ev.pair(pr(curry(pi2),curry(s.ev)).pi1,pi2)*pair(s.0,s.s.0)
+3:ev*pair(pr(curry(pi2),curry(s.ev)).pi1,pi2).pair(s.0,s.s.0)
+4[1]:pr(curry(pi2),curry(s.ev)).pi1.pair(s.0,s.s.0)*
+5[1]:pr(curry(pi2),curry(s.ev)).pi1*pair(s.0,s.s.0)
+6[1]:pr(curry(pi2),curry(s.ev)).s.0*id
+7[1]:pr(curry(pi2),curry(s.ev)).s*0
+8[1]:pr(curry(pi2),curry(s.ev))*s.0
+9[1]:curry(s.ev).pr(curry(pi2),curry(s.ev))*0
+10[1]:curry(s.ev).curry(pi2).!*
+11[1]:curry(s.ev).curry(pi2)*!
+12[1]:curry(s.ev)*curry(pi2).!
+13[1]:*curry(s.ev).curry(pi2).!
+14:s.ev*pair(curry(pi2).!,pi2.pair(s.0,s.s.0))
+15[1]:curry(pi2).!*
+16[1]:curry(pi2)*!
+17[1]:*curry(pi2).!
+18:s.pi2*pair(!,pi2.pair(s.0,s.s.0))
+19:s.pi2.pair(s.0,s.s.0)*id
+20:s.pi2*pair(s.0,s.s.0)
+21:s.s.s.0*id
+22:s.s.s*0
+23:s.s*s.0
+24:s*s.s.0
+25:*s.s.s.0
+s.s.s.0
+    :1 -> nat
+\end{verbatim}
+\end{quote}
+It took 25 steps of applying the reduction rules to get the final result,
+$3$.  At each step CPL prints out trace information.  The right hand side
+of \verb"*" is a reduced term and the left hand side is one to be reduced.
+Step 4 to 13 is a sub-reduction to get a canonical form for productive
+objects.  The nesting level of reduction is printing inside brackets.
+
+Let us see some reductions for \verb"list(a)".
+\begin{quote}
+\begin{verbatim}
+cpl>show seq
+pi2.pr(pair(0,nil),pair(s.pi1,cons))
+    : nat -> list(nat)
+cpl>simp seq.s.s.s.0
+0:seq.s.s.s.0*
+1:seq.s.s.s*0
+2:seq.s.s*s.0
+3:seq.s*s.s.0
+4:seq*s.s.s.0
+5:pi2.pr(pair(0,nil),pair(s.pi1,cons))*s.s.s.0
+6:pi2.pair(s.pi1,cons).pr(pair(0,nil),pair(s.pi1,cons))*s.s.0
+7:pi2.pair(s.pi1,cons).pair(s.pi1,cons).pr(pair(0,nil),pair(s.pi1,cons))*
+    s.0
+8:pi2.pair(s.pi1,cons).pair(s.pi1,cons).pair(s.pi1,cons).pr(pair(0,nil),
+    pair(s.pi1,cons))*0
+9:pi2.pair(s.pi1,cons).pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!*
+10:pi2.pair(s.pi1,cons).pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil)*!
+11:pi2.pair(s.pi1,cons).pair(s.pi1,cons).pair(s.pi1,cons)*pair(0,nil).!
+12:pi2.pair(s.pi1,cons).pair(s.pi1,cons)*pair(s.pi1,cons).pair(0,nil).!
+13:pi2.pair(s.pi1,cons)*pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+14:pi2*pair(s.pi1,cons).pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+15:cons*pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+16:*cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+    :1 -> list(nat)
+cpl>show head
+prl(in2,in1.pi1)
+    : list(*a) -> coprod(*a,1)
+cpl>simp head.it
+0:head.it*
+1:head.cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!*
+2:head.cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil)*!
+3:head.cons.pair(s.pi1,cons).pair(s.pi1,cons)*pair(0,nil).!
+4:head.cons.pair(s.pi1,cons)*pair(s.pi1,cons).pair(0,nil).!
+5:head.cons*pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+6:head*cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+7:prl(in2,in1.pi1)*cons.pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+8:in1.pi1.pair(pi1,prl(in2,in1.pi1).pi2)*pair(s.pi1,cons).pair(s.pi1,cons).
+    pair(0,nil).!
+9:in1.pi1*pair(pi1,prl(in2,in1.pi1).pi2).pair(s.pi1,cons).pair(s.pi1,cons).
+    pair(0,nil).!
+10:in1.pi1*pair(s.pi1,cons).pair(s.pi1,cons).pair(0,nil).!
+11:in1.s.pi1*pair(s.pi1,cons).pair(0,nil).!
+12:in1.s.s.pi1*pair(0,nil).!
+13:in1.s.s.0*!
+14:in1.s.s*0.!
+15:in1.s*s.0.!
+16:in1*s.s.0.!
+17:*in1.s.s.0.!
+in1.s.s.0.!
+    :1 -> coprod(nat,1)
+\end{verbatim}
+\end{quote}
+
+Both \verb"nat" and \verb"list(a)" are initial algebras.  Let us see how CPL
+simplifies a ground term the codomain of which is a final co-algebra.
+ \verb"inf_seq" gives an infinite list the elements of which are the same.
+\begin{quote}
+\begin{verbatim}
+cpl>show inf_seq
+fold(id,id)
+    : *a -> inf_list(*a)
+cpl>simp inf_seq.s.s.0
+0:inf_seq.s.s.0*
+1:inf_seq.s.s*0
+2:inf_seq.s*s.0
+3:inf_seq*s.s.0
+4:fold(id,id)*s.s.0
+5:*fold(id,id).s.s.0
+fold(id,id).s.s.0
+    :1 -> inf_list(nat)
+cpl>let l=it
+l : 1 -> inf_list(nat) defined
+cpl>simp hd.l
+0:hd.l*
+1:hd.it*
+2:hd.fold(id,id).s.s.0*
+3:hd.fold(id,id).s.s*0
+4:hd.fold(id,id).s*s.0
+5:hd.fold(id,id)*s.s.0
+6:hd*fold(id,id).s.s.0
+7:id*s.s.0
+8:*s.s.0
+s.s.0
+    :1 -> nat
+cpl>simp hd.tl.l
+0:hd.tl.l*
+1:hd.tl.fold(id,id).s.s.0*
+2:hd.tl.fold(id,id).s.s*0
+3:hd.tl.fold(id,id).s*s.0
+4:hd.tl.fold(id,id)*s.s.0
+5:hd.tl*fold(id,id).s.s.0
+6:hd.fold(id,id)*s.s.0
+7:hd*fold(id,id).s.s.0
+8:id*s.s.0
+9:*s.s.0
+s.s.0
+    :1 -> nat
+cpl>show inf_inc_seq
+fold(id,s).0
+    : 1 -> inf_list(nat)
+cpl>simp hd.inf_inc_seq
+0
+    :1 -> nat
+cpl>simp hd.tl.inf_inc_seq
+s.0
+    :1 -> nat
+\end{verbatim}
+\end{quote}
+
+\end{document}

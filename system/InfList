@@ -1,0 +1,15 @@
+right object inflist(a) with fold is
+  head: inflist -> a
+  tail: inflist -> inflist
+end object;
+
+let inf_seq = fold(id,id);
+
+let inf_inc_seq = fold(id,s).0;
+
+let alt = fold(head.pi1,pair(pi2,tail.pi1));
+
+let sum_seq = fold(pi2,pair(tail.pi1,add.pair(head.pi1,pi2))).pair(tail,head);
+
+let nth = head.eval.prod(pr(curry(pi2),curry(tail.eval)),id);
+

@@ -1,0 +1,21 @@
+left object list(p) with prl is
+  nil:1->list
+  cons:prod(p,list)->list
+end object;
+
+let append=eval.prod(prl(curry(pi2),
+		       curry(cons.pair(pi1.pi1,eval.pair(pi2.pi1,pi2)))),
+		   id);
+
+let reverse=prl(nil,
+		append.pair(pi2,cons.pair(pi1,nil.!)));
+
+let hd=prl(in2,in1.pi1);
+
+let hdp=case(hd,in2);
+
+let tl=case(in1.pi2,in2).prl(in2,in1.pair(pi1,case(cons,nil).pi2));
+
+let tlp=case(tl,in2);
+
+let seq=pi2.pr(pair(0,nil),pair(s.pi1,cons));

@@ -1,0 +1,659 @@
+;;
+;; Diagram Editor for WCAT
+;;
+;;   By Tatsuya Hagino
+;;
+;;   September 1985
+
+(def nterpri
+ (macro (l) '(progn (tyo 13) (terpri))))
+
+(def rascii
+ (macro (l) (car (exploden (cadr l)))))
+
+(def rarrow (macro (l) ''|->|))
+
+(def rcolon (macro (l) ''|:|))
+
+(def rcomp (macro (l) ''|.|))
+
+(def rrcomp (macro (l) ''|\||))
+
+(def rlpar (macro (l) ''|(|))
+
+(def rrpar (macro (l) ''|)|))
+
+(def rcomma (macro (l) ''|,|))
+
+(def requal (macro (l) ''|=|))
+
+(def rstar (macro (l) ''|*|))
+
+(def rctrl
+ (macro (l) (- (car (exploden (cadr l))) 64)))
+
+(def resc
+ (macro (l) (+ (car (exploden (cadr l))) 128)))
+
+(def onext
+ (macro (l)
+  (cond ((cdr l) `(setq ,(cadr l) (cdr ,(cadr l))))
+	(t '(setq tokl (cdr tokl))))))
+
+(def pp-inc (macro (l) `(setq ,(cadr l) (1+ ,(cadr l)))))
+
+(def pp-dec (macro (l) `(setq ,(cadr l) (1- ,(cadr l)))))
+
+(def pp-cons (macro (l) `(setq ,(caddr l) (cons ,(cadr l) ,(caddr l)))))
+
+(def pp-cdr (macro (l) `(setq ,(cadr l) (cdr ,(cadr l)))))
+
+(def pp-while
+ (macro (l)
+  `(prog () pp-while-label (cond ,(append (cdr l) '((go pp-while-label)))))))
+
+(def pp-do
+ (macro (l)
+  (prog (p c vars inits)
+	(pp-cdr l)
+	(pp-while l
+	 (cond ((or (eq (car l) 'until) (eq (car l) 'while))
+		(cond ((null (cdr l)) (error 'pp-do))
+		      ((eq (car l) 'until) (setq c (cadr l)))
+		      (t (setq c `(not ,(cadr l)))))
+		(pp-cons `(cond (,c (return))) p)
+		(pp-cdr l))
+	       ((eq (car l) 'var)
+		(cond ((or (null (cdr l)) (not (atom (cadr l))))
+		       (error 'pp-do)))
+		(pp-cons (cadr l) vars))
+	       ((eq (car l) 'vars)
+		(cond ((or (null (cdr l)) (not (dtpr (cadr l))))
+		       (error 'pp-do)))
+		(setq vars (append (cadr l) vars)))
+	       ((eq (car l) 'init)
+		(cond ((null (cdr l)) (error 'pp-do)))
+		(pp-cons (cadr l) inits))
+	       (t (pp-cons (car l) p)))
+	 (pp-cdr l))
+	(return (cons 'prog
+		      (cons (nreverse vars)
+			    (nconc (nreverse inits)
+				   (cons 'pp-do-label
+					 (nconc (nreverse p)
+						'((go pp-do-label)))))))))))
+
+
+;;
+;; structire list
+;;
+;; ((domain codomain) (forced-domain forced-codomain))
+;;  type
+;;  factorizer-name/(morphism vars domain codomain)
+;;  son-list)
+
+(declare (macros t))
+
+(declare (special $de-win $de-l $de-c $de-x $de-y $windows $var $avar $ln))
+
+(declare (special $de-from $de-sl $de-end $de-kill $de-name $erflag))
+
+(declare (special $wc-l $wc-ll $w-ll $wc-c $w-edit $w-command $error $errpos))
+
+(setq $de-sl nil)
+
+(def dedit
+ (lambda (w name)
+  (prog (wi ch flg uarg luarg ch ml)
+	(setq wi (assoc w $windows))
+	(cond ((null wi) (return nil))
+	      ((and (null name) $de-sl) (go ii))
+	      ((null name) (princ "No previous edit") (nterpri) (return nil))
+	      ((null (setq $de-sl (de-print (setq $de-name name))))
+	       (oprinl `(,name "cannot be edited"))
+	       (nterpri)
+	       (return nil)))
+	(setq $de-win w)
+	(setq $de-l (cadddr wi))
+	(setq $de-c (car (cddddr wi)))
+	(setq $de-x (setq $de-y 0))
+	(setq $de-from 0)
+	(setq $de-kill nil)
+   ii	(esc "(0S")
+	(wpull w)
+   uu   (de-update)
+   aa   (setq uarg 1)
+	(wcupos $de-win $de-x $de-y)
+	(setq ch (tyi))
+   bb	(cond ((= ch 27)
+	       (setq ch (tyi))
+	       (cond ((and (<= (rascii a) ch) (<= ch (rascii z)))
+		      (setq ch (- ch 32))))
+	       (setq ch (+ ch 128))))
+	(cond ((= ch (resc A)) (setq ch (rctrl P)))
+	      ((= ch (resc B)) (setq ch (rctrl N)))
+	      ((= ch (resc C)) (setq ch (rctrl F)))
+	      ((= ch (resc D)) (setq ch (rctrl B)))
+	      ((= ch (resc 0)) (setq ch (rctrl Z)))
+	      ((or (= ch (resc 1)) (= ch (resc 2))) (setq ch (rctrl M))))
+	(cond ((= ch (rctrl F)) (de-right uarg))
+	      ((= ch (rctrl B)) (de-left uarg))
+	      ((= ch (rctrl P)) (cond ((de-up uarg) (go uu))))
+	      ((= ch (rctrl N)) (cond ((de-down uarg) (go uu))))
+	      ((= ch (rctrl V)) (de-scroll $de-l) (go uu))
+	      ((= ch (resc V))
+	       (cond ((not (zerop $de-from))
+		      (de-scroll (minus $de-l)) (go uu))))
+	      ((= ch (resc |<|))
+	       (cond ((not (zerop $de-from)) (setq $de-from 0) (go uu))))
+	      ((= ch (resc |>|)) (setq $de-from 32767) (go uu))
+	      ((= ch (rctrl C)) (esc "(26S") (return nil))
+	      ((= ch (rctrl Z))
+	       (setq ml (errset (de-extract) $erflag))
+	       (cond ((atom ml) (wselect $w-command)
+				(princ "incomplete diagram")
+				(nterpri))
+		     (t (esc "(26S") (return (car ml)))))
+	      ((and (<= (rascii 0) ch) (<= ch (rascii 9)))
+	       (setq luarg 0) (go ee))
+	      ((= ch (rctrl U)) (go cc))
+	      ((or (= ch (rctrl K)) (= ch (rctrl D))) (de-kill) (go uu))
+	      ((= ch (rctrl Y)) (de-yank) (go uu))
+	      ((= ch (rctrl M)) (cond ((de-modify) (go uu)))))
+	(go aa)
+   cc   (setq luarg 0)
+	(setq flg nil)
+   dd   (setq ch (tyi))
+   ee	(cond ((and (<= (rascii 0) ch) (<= ch (rascii 9)))
+	       (setq flg t)
+	       (setq luarg (+ (* luarg 10) (- ch (rascii 0))))
+	       (go dd))
+	      ((null flg) (setq luarg 4)))
+	(setq uarg (* uarg luarg))
+	(go bb))))
+
+(def de-extract
+ (lambda ()
+  (prog (ml vl nvl)
+	(setq ml (de-extract-1 $de-sl))
+	(setq vl (mgetvol (caar $de-sl) nil))
+	(return (cons $de-name (cons ml (cons vl (caar $de-sl))))))))
+
+(def de-extract-1
+ (lambda (sl)
+  (cond ((eq (cadr sl) 'composing) (de-extract-list (cadddr sl)))
+	((eq (cadr sl) 'morphism) (caaddr sl))
+	((eq (cadr sl) 'factorizer)
+	 (list
+	  (list 'factorizer (caddr sl) (de-extract-list-list (cadddr sl)))))
+	((eq (cadr sl) 'functor)
+	 (de-extract-functor (caddr sl) (de-extract-list-list (cadddr sl))))
+	(t (error 0)))))
+
+(def de-extract-functor
+ (lambda (name args)
+  (prog (para l argl)
+	(setq l (setq para (cadr (get name 'object))))
+	(pp-while l
+		  (pp-cons (list (car l) (car args) nil nil) argl)
+		  (pp-cdr l)
+		  (pp-cdr args))
+	(return (car (mfungt (list 'object name para) argl))))))
+
+(def de-extract-list
+ (lambda (lsl)
+  (cond ((null lsl) '((identity)))
+	(t (mcomp (de-extract-list (cdr lsl)) (de-extract-1 (car lsl)))))))
+
+
+(def de-extract-list-list
+ (lambda (lsl)
+  (cond ((null lsl) nil)
+	(t (cons (de-extract-1 (car lsl)) (de-extract-list-list (cdr lsl)))))))
+
+(def de-right
+ (lambda (n)
+  (progn (setq $de-x (+ n $de-x))
+	 (cond ((>= $de-x $de-c) (setq $de-x (1- $de-c)))))))
+
+(def de-left
+ (lambda (n)
+  (progn (setq $de-x (- $de-x n))
+	 (cond ((< $de-x 0) (setq $de-x 0))))))
+
+(def de-up
+ (lambda (n)
+  (progn (setq $de-y (- $de-y n))
+	 (cond ((< $de-y 0) (de-scroll $de-y) (setq $de-y 0) t) (t nil)))))
+
+(def de-down
+ (lambda (n)
+  (progn (setq $de-y (+ $de-y n))
+	 (cond ((>= $de-y $de-l) (de-scroll (1+ (- $de-y $de-l)))
+				 (setq $de-y (1- $de-l))
+				 t)
+	       (t nil)))))
+
+(def de-scroll
+ (lambda (n)
+  (progn (setq $de-from (+ n $de-from))
+	 (cond ((< $de-from 0) (setq $de-from 0))))))
+
+(def de-modify
+ (lambda ()
+  (prog (what ln tokl new)
+	(setq what (de-pick $de-sl 0 (setq ln (+ $de-from $de-y))))
+	(cond ((numberp what) (return nil)))
+	(setq $wc-l nil)
+	(setq $wc-ll nil)
+	(setq $wc-c 0)
+	(cond ((null what) (return nil))
+	      ((eq (car what) 'arrow)
+	       (wc-pobj (caaar (cadr what)))
+	       (wc-princ " -> ")
+	       (wc-pobj (cadaar (cadr what)))
+	       (wc-terpri))
+	      ((eq (cadadr what) 'morphism)
+	       (wc-pmorphl (caaddr (cadr what)))
+	       (wc-terpri))
+	      ((or (eq (cadadr what) 'factorizer) (eq (cadadr what) 'functor))
+	       (wc-princ (caddr (cadr what)))
+	       (wc-terpri))
+	      ((eq (cadadr what) 'composing)
+	       (setq tokl (cadddr (cadr what)))
+	       (pp-while (pp-cdr tokl) (wc-princ (rcomp)))
+	       (wc-terpri)))
+	(we-put (nreverse $wc-ll))
+	(w-select $w-edit t)
+   aa	(cond ((= (wedit $w-edit) 3) (esc "(0S") (wpush $w-edit) (return nil)))
+	(esc "(0S")
+	(setq $w-ll (we-get))
+	(rclear)
+	(setq tokl (rtokl 'window))
+	(rclear)
+	(cond ((null tokl) (wpush $w-edit) (return nil)))
+	(setq new (errset (de-parse tokl (car what)) $erflag))
+	(cond ((atom new) (wselect $w-command)
+			  (princ "Syntax error: ")
+			  (oprinl $error)
+			  (nterpri)
+			  (oerrposprint tokl $errpos)
+			  (go aa)))
+	(setq new (car new))
+	(setq new (cadr (de-replace $de-sl 0 ln new)))
+	(setq new (errset (de-eval new) $erflag))
+	(cond ((atom new) (wselect $w-command)
+			  (princ "Domain incompatible")
+			  (nterpri)
+			  (go aa)))
+	(setq $de-sl (car new))
+	(wpush $w-edit)
+	(cond ((and (eq (car what) 'type) (not (eq (cadadr what) 'undefined)))
+	       (setq $de-kill (cadr what))))
+	(return t))))
+
+(def de-kill
+ (lambda ()
+  (prog (what ln)
+	(setq what (de-pick $de-sl 0 (setq ln (+ $de-from $de-y))))
+	(cond ((or (numberp what)
+		   (eq (car what) 'arrow)
+		   (eq (cadadr what) 'undefined))
+	       (return nil)))
+	(setq $de-kill (cadr what))
+	(setq
+	 $de-sl
+	 (de-eval
+	  (cadr
+	   (de-replace
+	    $de-sl
+	    0
+	    ln
+	    '(type ((nil nil) undefined nil nil)))))))))
+
+(def de-yank
+ (lambda ()
+  (prog (what ln sl)
+	(cond ((null $de-kill) (return nil)))
+	(setq what (de-pick $de-sl 0 (setq ln (+ $de-from $de-y))))
+	(cond ((or (numberp what) (eq (car what) 'arrow)) (return nil)))
+	(setq sl (cadr (de-replace $de-sl 0 ln (list 'type $de-kill))))
+	(setq sl (errset (de-eval sl) $erflag))
+	(cond ((atom sl)
+	       (wselect $w-command)
+	       (princ "Domain incompatible")
+	       (nterpri)
+	       (wselect $de-win)
+	       (return nil)))
+	(setq $de-sl (car sl))
+	(cond ((not (eq (cadadr what) 'undefined))
+	       (setq $de-kill (cadr what)))))))
+
+(def de-parse
+ (lambda (tokl arrow)
+  (prog (dom codom ml sl)
+	(cond ((eq arrow 'arrow)
+	       (setq dom (odom tokl nil t nil))
+	       (setq tokl (cadr dom))
+	       (ocheck tokl (rarrow))
+	       (onext)
+	       (setq codom (odom tokl nil t (caddr dom)))
+	       (cond ((setq tokl (cadr codom)) (go zz)))
+	       (return (list 'arrow (car dom) (car codom))))
+	      ((null tokl) (go zz))
+	      ((or (eq (car tokl) (rcomp)) (eq (car tokl) (rrcomp)))
+	       (setq ml '((undefined)))
+	       (pp-while (and tokl
+			      (or (eq (car tokl) (rcomp))
+				  (eq (car tokl) (rrcomp))))
+			 (pp-cons '(undefined) ml)
+			 (pp-cdr tokl))
+	       (cond (tokl (go zz)))
+	       (setq sl (de-print-comp ml)))
+	      ((and (null (cdr tokl))
+		    (setq sl (get (car tokl) 'morphism))
+		    (eq (car sl) 'factorizer))
+	       (setq sl (de-print-1 (list 'factorizer (car tokl) nil))))
+	      ((and (null (cdr tokl)) (eq (car sl) 'functor))
+	       (setq sl (cadddr sl))
+	       (pp-while sl
+		(cond ((eq (car sl) 'fix) (pp-cons '(identity) ml))
+		      (t (pp-cons '(undefined) ml)))
+		(pp-cdr sl))
+	       (setq sl nil)
+	       (pp-while ml
+		(pp-cons (de-print-1 (car ml)) sl)
+		(pp-cdr ml))
+	       (setq sl (list '(nil nil) 'functor (car tokl) sl)))
+	      (t (setq ml (morph0 tokl nil))
+		 (setq sl (list '(nil nil) 'morphism ml nil))))
+	(return (list 'type sl))
+   zz   (oerror "illegal end" (cadr codom)))))
+
+(def de-replace
+ (lambda (sl line pos new)
+  (cond ((equal line pos)
+	 (cond ((eq (car new) 'arrow)
+		(list (+ line 2) (cons (list nil (cdr new)) (cdr sl))))
+	       (t (list (+ line 2) sl))))
+	((equal (1+ line) pos)
+	 (cond ((eq (car new) 'type)
+		(list (+ line 2) (cons (list nil (cadar sl)) (cdadr new))))
+	       (t (list (+ line 2) sl))))
+	((< pos line) (list line sl))
+	((memq (cadr sl) '(factorizer composing functor))
+	 (setq line (de-replace-list (cadddr sl) (+ line 2) pos new))
+	 (list (car line) (list (car sl) (cadr sl) (caddr sl) (cadr line))))
+	(t (list (+ line 2) sl)))))
+
+(def de-replace-list
+ (lambda (lsl line pos new)
+  (cond ((null lsl) (list line nil))
+	((null (cdr lsl)) (setq line (de-replace (car lsl) line pos new))
+			  (list (car line) (list (cadr line))))
+	(t (setq line (de-replace (car lsl) line pos new))
+	   (setq lsl (de-replace-list (cdr lsl) (1+ (car line)) pos new))
+	   (list (car lsl) (cons (cadr line) (cadr lsl)))))))
+
+(def de-pick
+ (lambda (sl line pos)
+  (cond ((equal line pos) (list 'arrow sl))
+	((equal (1+ line) pos) (list 'type sl))
+	((< pos line) nil)
+	((memq (cadr sl) '(factorizer composing functor))
+	 (de-pick-list (cadddr sl) (+ line 2) pos))
+	(t (+ line 2)))))
+
+(def de-pick-list
+ (lambda (lsl line pos)
+  (prog ()
+   aa   (cond ((null lsl) (return line))
+	      ((not (numberp (setq line (de-pick (car lsl) line pos))))
+	       (return line)))
+	(cond ((pp-cdr lsl) (pp-inc line)))
+	(go aa))))
+
+(def de-update
+ (lambda ()
+  (prog ()
+	(wcupos $de-win 0 0)
+   aa	(setq $de-end (de-display $de-sl 0 0 $de-from (+ $de-from $de-l -1) t))
+	(cond ((< $de-end $de-from) (setq $de-from $de-end)))
+	(wcleos nil))))
+
+(def de-get-var
+ (lambda (sl vl)
+  (mgetvol (caar sl)
+	   (de-get-var-list (cadddr sl) vl))))
+
+(def de-get-var-list
+ (lambda (lsl vl)
+  (cond ((null lsl) vl)
+	(t (de-get-var-list (cdr lsl) (de-get-var (car lsl) vl))))))
+
+(def de-print
+ (lambda (name)
+  (prog (dc rt)
+	(setq dc (get name 'morphism))
+	(cond ((and dc (not (eq (car dc) 'auxiliary))) (return nil))
+	      ((null dc) (setq rt (de-print-1 '(undefined))))
+	      (t (setq rt (de-print-comp (caddr dc)))))
+	(return (de-eval rt)))))
+
+(def de-print-comp
+ (lambda (ml)
+  (prog (son-list)
+	(cond ((null (cdr ml)) (return (de-print-1 (car ml)))))
+	(pp-while ml
+		  (pp-cons (de-print-1 (car ml)) son-list)
+		  (pp-cdr ml))
+	(return (list '(nil nil) 'composing nil son-list)))))
+
+(def de-print-1
+ (lambda (morph)
+  (prog (type inf son-list dc x y vl obj)
+	(cond ((eq (car morph) 'undefined) (go zz))
+	      ((eq (car morph) 'unit)
+	       (setq type 'morphism)
+	       (setq dc (get (cadr morph) 'morphism))
+	       (cond ((or (null dc) (not (eq (car dc) 'unit))) (go zz)))
+	       (setq obj (get (cadr dc) 'object))
+	       (cond ((null obj) (go zz)))
+	       (setq x (cadr obj))
+	       (setq vl (list (list (cadr dc) (list 'object (cadr dc) x))))
+	       (setq y (cdr (assq (cadr morph) (cadddr obj))))
+	       (setq inf (list (list morph)
+			       x
+			       (msubsto (car y) vl)
+			       (msubsto (cadr y) vl))))
+	      ((eq (car morph) 'identity)
+	       (setq type 'morphism)
+	       (setq inf (list (list morph) '(a) 'a 'a)))
+	      ((eq (car morph) 'auxiliary)
+	       (setq type 'morphism)
+	       (setq dc (get (cadr morph) 'morphism))
+	       (cond ((or (null dc) (not (eq (car dc) 'auxiliary))) (go zz)))
+	       (setq inf (cons (list morph) (cdddr dc))))
+	      ((eq (car morph) 'factorizer)
+	       (setq type 'factorizer)
+	       (setq inf (cadr morph))
+	       (setq dc (get (cadr morph) 'morphism))
+	       (cond ((or (null dc) (not (eq (car dc) 'factorizer))) (go zz)))
+	       (setq obj (get (cadr dc) 'object))
+	       (cond ((null obj) (go zz)))
+	       (cond ((null (setq y (caddr morph)))
+		      (setq y (cadddr obj))
+		      (pp-while y
+				(pp-cons (de-print-1 '(undefined)) son-list)
+				(pp-cdr y)))
+		     (t (pp-while y
+				  (pp-cons (de-print-comp (car y)) son-list)
+				  (pp-cdr y))
+			(setq son-list (nreverse son-list)))))
+	      (t (error 0)))
+   	(return (list '(nil nil) type inf son-list))
+   zz   (return '((nil nil) undefined nil nil)))))
+
+
+(def de-subst-list
+ (lambda (lsl vl)
+  (cond ((null lsl) nil)
+	(t (cons (de-subst (car lsl) vl) (de-subst-list (cdr lsl) vl))))))
+
+(def de-subst
+ (lambda (sl vl)
+  (list (cons (msubstol (caar sl) vl) (cdar sl))
+	(cadr sl)
+	(caddr sl)
+	(de-subst-list (cadddr sl) vl))))
+
+(def de-eval
+ (lambda (sl)
+  (prog (vl)
+	(setq $var 0)
+	(setq sl (de-eval-1 sl))
+	(setq vl (de-get-var sl nil))
+	(setq $avar nil)
+	(setq sl (de-subst sl (mpair vl (mnewvara vl nil))))
+	(return sl))))
+
+(def de-eval-1
+ (lambda (sl)
+  (prog (dom codom fdom type inf son-list vl l unitl obj objnm)
+	(setq type (cadr sl))
+	(setq inf (caddr sl))
+	(setq son-list (mapcar 'de-eval-1 (cadddr sl)))
+	(cond ((eq type 'undefined)
+	       (setq dom (car (setq vl (mnewvar '(a a)))))
+	       (setq codom (cadr vl)))
+	      ((eq type 'morphism)
+	       (setq vl (mpair (cadr inf) (mnewvar (cadr inf))))
+	       (setq dom (msubsto (caddr inf) vl))
+	       (setq codom (msubsto (cadddr inf) vl)))
+	      ((eq type 'composing)
+	       (pp-while son-list
+			 (cond (l (setq vl (munify (cadr (caaar l))
+						   (caaaar son-list)))
+				  (setq son-list (de-subst-list son-list vl))
+				  (setq l (de-subst-list l vl))))
+			 (pp-cons (car son-list) l)
+			 (pp-cdr son-list))
+	       (setq codom (cadr (caaar l)))
+	       (setq son-list (nreverse l))
+	       (setq dom (caaaar son-list)))
+	      ((eq type 'factorizer)
+	       (setq obj (get (setq objnm (cadr (get inf 'morphism))) 'object))
+	       (setq vl (mnewvar (setq l (cons objnm (cadr obj)))))
+	       (cond ((eq (car obj) 'right)
+		      (setq codom (list 'object objnm (cdr vl)))
+		      (setq dom (car vl)))
+		     (t (setq dom (list 'object objnm (cdr vl)))
+			(setq codom (car vl))))
+	       (setq unitl (msubstoll (mapcar 'cdr (cadddr obj)) (mpair l vl)))
+	       (setq l nil)
+	       (pp-while son-list
+			 (setq vl (munify (caaaar son-list) (caar unitl)))
+			 (setq son-list (de-subst-list son-list vl))
+			 (setq l (de-subst-list l vl))
+			 (setq dom (msubsto dom vl))
+			 (setq codom (msubsto codom vl))
+			 (setq unitl (msubstoll unitl vl))
+			 (setq vl (munify (cadaar (car son-list))
+					  (cadar unitl)))
+			 (setq son-list (de-subst-list son-list vl))
+			 (setq l (de-subst-list l vl))
+			 (setq dom (msubsto dom vl))
+			 (setq codom (msubsto codom vl))
+			 (setq unitl (msubstoll (cdr unitl) vl))
+			 (pp-cons (car son-list) l)
+			 (pp-cdr son-list))
+	       (setq son-list (nreverse l)))
+	      ((eq type 'functor)
+	       (setq unitl (cadddr (get inf 'morphism)))
+	       (setq l son-list)
+	       (pp-while unitl
+		(cond ((eq (car unitl) 'contravariant)
+		       (pp-cons (cadaar (car l)) dom)
+		       (pp-cons (caaaar l) codom))
+		      ((eq (car unitl) 'fix)
+		       (cond ((equal (car (caddar l)) '((identity)))
+			      (pp-cons (caaaar l) dom)
+			      (pp-cons (car dom) codom))
+			     (t (error 0))))
+		      (t (pp-cons (caaaar l) dom)
+			 (pp-cons (cadaar (car l)) codom)))
+		(pp-cdr unitl)
+		(pp-cdr l))
+	       (setq dom (list 'object inf (nreverse dom)))
+	       (setq codom (list 'object inf (nreverse codom))))
+	      (t (error 0)))
+	(cond ((setq fdom (cadar sl))
+	       (setq vl (mgetvol fdom nil))
+	       (setq fdom (msubstol fdom (mpair vl (mnewvar vl))))
+	       (setq vl (munify dom (car fdom)))
+	       (setq dom (msubsto dom vl))
+	       (setq codom (msubsto codom vl))
+	       (setq son-list (de-subst-list son-list vl))
+	       (setq vl (munify (msubsto (cadr fdom) vl) codom))
+	       (setq dom (msubsto dom vl))
+	       (setq codom (msubsto codom vl))
+	       (setq son-list (de-subst-list son-list vl))))
+	(return (list (cons (list dom codom) (cdar sl))
+		      type inf son-list)))))
+
+(def de-indent
+ (lambda (n)
+  (pp-while (> n 0) (tyo 32) (pp-dec n))))
+
+(def de-display
+ (lambda (sl line indent from to win)
+  (prog (type test)
+	(cond ((and (<= from line) (<= line to))
+	       (cond (win (wcupos nil 0 (- line from))))
+	       (de-indent indent)
+	       (pobj (caaar sl))
+	       (princ " -> ")
+	       (pobj (cadaar sl))
+	       (cond (win (wcleol nil)) (t (nterpri)))))
+	(pp-inc line)
+	(setq type (cadr sl))
+	(cond ((setq test (and (<= from line) (<= line to)))
+	       (cond (win (wcupos nil 0 (- line from))))
+	       (de-indent indent)
+	       (princ "given by ")))
+	(pp-inc line)
+	(cond ((eq type 'morphism)
+	       (cond (test
+		      (setq $ln 32767)
+		      (pmorphl (caaddr sl) -1)
+		      (cond (win (wcleol nil)) (t (nterpri)))
+		      (return line))))
+	      ((eq type 'undefined)
+	       (cond (test
+		      (princ "<unknown>")
+		      (cond (win (wcleol nil)) (t (nterpri)))
+		      (return line))))
+	      ((eq type 'composing)
+	       (cond (test (princ "composing"))))
+	      ((or (eq type 'factorizer) (eq type 'functor))
+	       (cond (test (princ type)
+			   (princ " ")
+			   (princ (caddr sl)))))
+	      (t (error 0)))
+	(cond ((not test)) (win (wcleol nil)) (t (nterpri)))
+	(return
+	 (de-display-list (cadddr sl) line (+ indent 2) from to win)))))
+
+(def de-display-list
+ (lambda (lsl line indent from to win)
+  (progn (pp-while (and lsl (<= line to))
+		   (setq line (de-display (car lsl) line indent from to win))
+		   (cond ((pp-cdr lsl)
+			  (cond ((and (<= from line) (<= line to))
+				 (cond (win (wcupos nil 0 (- line from))))
+				 (de-indent (- indent 2))
+				 (princ "and")
+				 (cond (win (wcleol nil)) (t (nterpri)))))
+			  (pp-inc line))))
+	 line)))
+

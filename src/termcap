@@ -1,0 +1,60 @@
+ideal|ideal terminal for window manager:\
+	:am:cr=^M:do=^J:nl=^J:bl=^G:\
+	:al=\EL:bs:cd=\Ey:ce=\Ex:cl=\Ev:\
+	:cm=\E[%i%d;%dH:co#80:dc=\EO:dl=\EM:ho=\EH:so=\E[7m:se=\E[m:\
+	:k0=\E0:k1=\E1:k2=\E2:k3=\E3:k4=\E4:k5=\E5:k6=\E6:\
+	:k7=\E7:k8=\E8:k9=\E9:kl=\ED:kr=\EC:ku=\EA:kd=\EB:kh=\EH:\
+	:li#24:nd=\EC:ta=^I:pt:up=\EA:vs=\Ed:ve=\Ec:
+ideal-a|ideal terminal for auto margin terminal:\
+	:co#79:tc=ideal:
+ideal-w|ideal terminal for 132 column:\
+	:co#132:tc=ideal:
+VF|vi200|visual 200 without function keys:\
+	:cr=^M:do=^J:nl=^J:bl=^G:\
+	:al=\EL:bs:cd=\Ey:ce=\Ex:cl=\Ev:\
+	:cm=\EY%+ %+ :co#80:dc=\EO:dl=\EM:ho=\EH:\
+	:im=:ei=:ic=\Ei \b\Ej:is=\E3\Eb\Ej\E\\\El\EG\Ed\Ek:ks=\E=:ke=\E>:\
+	:k0=\E?p:k1=\E?q:k2=\E?r:k3=\E?s:k4=\E?t:k5=\E?u:k6=\E?v:\
+	:k7=\E?w:k8=\E?x:k9=\E?y:kl=\ED:kr=\EC:ku=\EA:kd=\EB:kh=\EH:\
+	:li#24:nd=\EC:ta=^I:pt:sr=\EI:up=\EA:vs=\Ed:ve=\Ec:
+V2|vi200-f|visual 200 with function keys:\
+	:ks@:ke@:\
+	:k0=\EP:k1=\EQ:k2=\ER:k3=\E :k4=\E!:k5=\E":k6=\E#:\
+	:k7=\E$:k8=\E%:k9=\E&:kl=\ED:kr=\EC:ku=\EA:kd=\EB:kh=\EH:\
+	:tc=vi200:
+vi200-h|vi200h|visual 200 without function keys with hilight:\
+	:im@:ei@:ic@:dc@:ks=\E=\E4:ke=\E>\E3:so=\E3:se=\E4:tc=vi200:
+vi200-hf|vi200hf|visual 200 with function keys with hilight:\
+	:im@:ei@:ic@:dc@:ks=\E=\E4:ke=\E>\E3:so=\E3:se=\E4:tc=vi200-f:
+m0|beeb0|BBC Micro in mode #0:\
+	:co#80:li#32:am:ce=\EE:cl=^p-L:bs:cm=\EM%+ %+ :\
+	:up=^p-K:do=^p-J:nd=^p-I:ho=^p-\^:\
+	:kl=\ED:kr=\EC:kd=\E@:ku=\EA:kh=\E]:\
+	:k0=\E<:k1=\E>:k2=\E,:k3=\E.:k4=\E4:\
+	:k5=\E5:k6=\EO:k7=\E7:k8=\E8:k9=\EJ:\
+	:so=^p-Q^p-@^p-Q^p+^p-A:se=^p-Q^P-A^p-Q^p+^p-@:\
+	:us=^p-Q^p-@^p-Q^p+^p-A:ue=^p-Q^p-A^p-Q^p+^p-@:\
+	:is=^p-V0^p-T^p-C^p-D^p-O:
+dw|vt52|dec vt52:\
+	:cr=^M:do=^J:nl=^J:bl=^G:\
+	:le=^H:bs:cd=\EJ:ce=\EK:cl=\EH\EJ:cm=\EY%+ %+ :co#80:li#24:nd=\EC:\
+	:ta=^I:pt:sr=\EI:up=\EA:ku=\EA:kd=\EB:kr=\EC:kl=\ED:kb=^H:
+cs|cifers|SERC cifer 2605:\
+	:co#80:li#24:\
+	:am:ho=\EH:ll=\E_:bs:nd=\EC:up=\EA:\
+	:cl=\EJ:ce=\EK:cd=\EB:\
+	:cm=\EP%r%.%.:\
+	:kl=\ED:kr=\EC:ku=\EA:kd=\E@:kh=\EH:\
+	:k0=~~J:k1=~~I:so=\EN:se=\EO:
+d0|vt100|vt100-a|dec vt100:\
+	:cr=^M:do=^J:nl=^J:bl=^G:co#80:li#24:cl=\E[H\E[2J:\
+	:le=^H:bs:cm=\E[%i%d;%dH:nd=\E[C:up=\E[A:\
+	:ce=\E[K:cd=\E[J:so=\E[7m:se=\E[m:us=\E[4m:ue=\E[m:\
+	:is=\E7\E[1;24r\E8:dl=\E[M:al=\E[L:dc=\E[P:im=\E[4h:ei=\E[4l:\
+	:ks=\E[?1h\E=:ke=\E[?1l\E>:ku=\EOA:kd=\EOB:kr=\EOC:kl=\EOD:kb=^H:\
+	:ho=\E[H:k0=\EOp:k1=\EOq:k2=\EOr:k3=\EOs:k4=\EOt:\
+	:k5=\EOu:k6=\EOv:k7=\EOw:k8=\EOx:k9=\EOy:kh=\EOP:\
+	:pt:sr=\EM:xn:cs=\E[%i%d;%dr:\
+	:vb=\E[?5h\200\200\200\200\200\200\200\200\200\200\200\200\200\E[?5l:
+dt|vt100-w|dec vt100 132 cols (w/advanced video):\
+	:co#132:li#24:rs=\E>\E[?3h\E[?4l\E[?5l\E[?8h:tc=vt100-a:

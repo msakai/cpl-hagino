@@ -1,0 +1,50 @@
+right object 1 with ! end object;
+
+right object prod(a,b) with pair is
+  pi1:prod->a
+  pi2:prod->b
+end object;
+
+right object exp(a,b) with curry is
+  eval:prod(exp,a)->b
+end object;
+
+left object coprod(a,b) with case is
+  in1:a->coprod
+  in2:b->coprod
+end object;
+
+left object bool with if is
+  true:1->bool
+  false:1->bool
+end object;
+
+left object nat with pr is
+  0:1->nat
+  s:nat->nat
+end object;
+
+let add=eval.prod(pr(curry(pi2),curry(s.eval)),id);
+
+let mult=eval.prod(pr(curry(0.!),
+		    curry(add.pair(eval,pi2))),
+                 id);
+
+let fact=pi1.pr(pair(s.0,0),
+		pair(mult.pair(s.pi2,pi1),s.pi2));
+
+let sub1=pr(in2,in1.case(s,0));
+
+let minus=eval.prod(pr(curry(in1.pi2),curry(case(sub1,in2).eval)),
+		  id).
+	  pair(pi2,pi1);
+
+let lesseq=case(true.!,false).minus.pair(pi2,pi1);
+
+let and=eval.prod(if(curry(pi2),curry(false.!)),id);
+
+let or=eval.prod(if(curry(true.!),curry(pi2)),id);
+
+let not=if(false,true);
+
+let equal=and.pair(lesseq,lesseq.pair(pi2,pi1));

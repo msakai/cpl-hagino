@@ -1,0 +1,7 @@
+let insert2 = if(curry(cons.pair(pi1.pi1,eval.pair(pi2.pi1,pi2)).pi2),
+		 curry(cons.pair(pi2,eval.pair(pi2.pi1,pi1.pi1)).pi2));
+
+let insert = prl(curry(cons.pair(pi2,nil.!)),
+		 curry(eval.pair(insert2.lesseq.pair(pi1.pi1,pi2),id)));
+
+let sort = prl(nil,eval.pair(insert.pi2,pi1));

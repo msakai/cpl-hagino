@@ -1,0 +1,229 @@
+Script started on Tue Jun  9 11:15:00 1987
+Tenex style Cshell command processor
+cheops>lcat
+Categorical Programming Language (version 3)
+cpl>read Nat
+productive right object 1 defined
+productive right object prod(+,+) defined
+productive right object exp(-,+) defined
+coproductive left object coprod(+,+) defined
+left object bool defined
+left object nat defined
+add : prod(nat,nat) -> nat defined
+mult : prod(nat,nat) -> nat defined
+fact : nat -> nat defined
+sub1 : nat -> coprod(nat,1) defined
+minus : prod(nat,nat) -> coprod(nat,1) defined
+lesseq : prod(nat,nat) -> bool defined
+and : prod(bool,bool) -> bool defined
+or : prod(bool,bool) -> bool defined
+not : bool -> bool defined
+equal : prod(nat,nat) -> bool defined
+cpl>read List
+left object list(+) defined
+append : prod(list(*a),list(*a)) -> list(*a) defined
+reverse : list(*a) -> list(*a) defined
+hd : list(*a) -> coprod(*a,1) defined
+hdp : coprod(list(*a),1) -> coprod(*a,1) defined
+tl : list(*a) -> coprod(list(*a),1) defined
+tlp : coprod(list(*a),1) -> coprod(list(*a),1) defined
+seq : nat -> list(nat) defined
+cpl>read InfList
+right object inflist(+) defined
+inf_seq : *a -> inflist(*a) defined
+inf_inc_seq : 1 -> inflist(nat) defined
+alt : prod(inflist(*a),inflist(*a)) -> inflist(*a) defined
+sum_seq : inflist(nat) -> inflist(nat) defined
+cpl>show sum_seq
+fold(pi2,pair(tail.pi1,add.pair(head.pi1,pi2))).pair(tail,head)
+    : inflist(nat) -> inflist(nat)
+cpl>simp head.sum_seq.inf_inc_seq
+0
+    :1 -> nat
+cpl>simp head.tail.sum_seq.inf_inc_seq
+s.0
+    :1 -> nat
+cpl>simp head.tail.tail.sum_seq.inf_inc_seq
+s.s.s.0
+    :1 -> nat
+cpl>simp head.tail.tail.tail.sum_seq.inf_inc_seq
+s.s.s.s.s.s.0
+    :1 -> nat
+cpl>let nth = head.eval.prod(pr(curry(pi2),curry(tail.eval)),id)
+nth : prod(nat,inflist(*a)) -> *a defined
+cpl>simp nth.pair(s.s.s.s.s.0,inf_inc_seq)
+s.s.s.s.s.0
+    :1 -> nat
+cpl>simp nth.pair(s.s.s.s.s.0,sum_seq.inf_inc_seq)
+s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.0
+    :1 -> nat
+cpl>simp head.inf_inc_seq;
+0
+    :1 -> nat
+cpl>simp head.tail.inf_inc_seq;
+s.0
+    :1 -> nat
+cpl>trace on
+no command: trace   type `help' for help
+cpl>set trace on
+cpl>simp head.tail.sum_seq.inf_inc_seq;
+0:head.tail.sum_seq.inf_inc_seq*
+1:head.tail.sum_seq.fold(id,s).0*
+2:head.tail.sum_seq.fold(id,s)*0
+3:head.tail.sum_seq*fold(id,s).0
+4:head.tail.fold(pi2,pair(&.&,&.&)).pair(tail,head)*fold(id,s).0
+5:head.tail.fold(pi2,pair(&.&,&.&))*pair(tail,head).fold(id,s).0
+6:head.tail*fold(pi2,pair(&.&,&.&)).pair(tail,head).fold(id,s).0
+7:head.fold(pi2,pair(&.&,&.&)).pair(tail.pi1,add.pair(&.&,&))*pair(tail,
+    head).fold(id,s).0
+8:head.fold(pi2,pair(&.&,&.&))*pair(tail.pi1,add.pair(&.&,&)).pair(tail,
+    head).fold(id,s).0
+9:head*fold(pi2,pair(&.&,&.&)).pair(tail.pi1,add.pair(&.&,&)).pair(tail,
+    head).fold(id,s).0
+10:pi2*pair(tail.pi1,add.pair(&.&,&)).pair(tail,head).fold(id,s).0
+11:add.pair(head.pi1,pi2)*pair(tail,head).fold(id,s).0
+12:add*pair(head.pi1,pi2).pair(tail,head).fold(id,s).0
+13:eval.pair(pr(&,&).pi1,pi2)*pair(head.pi1,pi2).pair(tail,head).fold(id,
+    s).0
+14:eval*pair(pr(&,&).pi1,pi2).pair(head.pi1,pi2).pair(tail,head).fold(id,
+    s).0
+15[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2).pair(tail,head).fold(
+    id,s).0*
+16[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2).pair(tail,head).fold(
+    id,s)*0
+17[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2).pair(tail,head)*fold(
+    id,s).0
+18[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2)*pair(tail,head).fold(
+    id,s).0
+19[1]:pr(curry(&),curry(&.&)).pi1*pair(head.pi1,pi2).pair(tail,head).fold(
+    id,s).0
+20[1]:pr(curry(&),curry(&.&)).head.pi1*pair(tail,head).fold(id,s).0
+21[1]:pr(curry(&),curry(&.&)).head.tail*fold(id,s).0
+22[1]:pr(curry(&),curry(&.&)).head.fold(id,s).s*0
+23[1]:pr(curry(&),curry(&.&)).head.fold(id,s)*s.0
+24[1]:pr(curry(&),curry(&.&)).head*fold(id,s).s.0
+25[1]:pr(curry(&),curry(&.&))*s.0
+26[1]:curry(s.eval).pr(curry(&),curry(&.&))*0
+27[1]:curry(s.eval).curry(pi2).!*
+28[1]:curry(s.eval).curry(pi2)*!
+29[1]:curry(s.eval)*curry(pi2).!
+30[1]:*curry(s.eval).curry(pi2).!
+31:s.eval*pair(curry(&).!,pi2.pair(&.&,&).pair(&,&).fold(&,&).0)
+32[1]:curry(pi2).!*
+33[1]:curry(pi2)*!
+34[1]:*curry(pi2).!
+35:s.pi2*pair(!,pi2.pair(&.&,&).pair(&,&).fold(&,&).0)
+36:s.pi2.pair(head.pi1,pi2).pair(tail,head).fold(id,s).0*id
+37:s.pi2.pair(head.pi1,pi2).pair(tail,head).fold(id,s)*0
+38:s.pi2.pair(head.pi1,pi2).pair(tail,head)*fold(id,s).0
+39:s.pi2.pair(head.pi1,pi2)*pair(tail,head).fold(id,s).0
+40:s.pi2*pair(head.pi1,pi2).pair(tail,head).fold(id,s).0
+41:s.pi2*pair(tail,head).fold(id,s).0
+42:s.head*fold(id,s).0
+43:s*0
+44:*s.0
+s.0
+    :1 -> nat
+cpl>simp nth.pair(s.0,sum_seq.inf_inc_seq)
+0:nth.pair(s.0,sum_seq.inf_inc_seq)*
+1:nth*pair(s.0,sum_seq.inf_inc_seq)
+2:head.eval.pair(pr(&,&).pi1,pi2)*pair(s.0,sum_seq.inf_inc_seq)
+3:head.eval*pair(pr(&,&).pi1,pi2).pair(s.0,sum_seq.inf_inc_seq)
+4[1]:pr(curry(&),curry(&.&)).pi1.pair(s.0,sum_seq.inf_inc_seq)*
+5[1]:pr(curry(&),curry(&.&)).pi1*pair(s.0,sum_seq.inf_inc_seq)
+6[1]:pr(curry(&),curry(&.&)).s.0*id
+7[1]:pr(curry(&),curry(&.&)).s*0
+8[1]:pr(curry(&),curry(&.&))*s.0
+9[1]:curry(tail.eval).pr(curry(&),curry(&.&))*0
+10[1]:curry(tail.eval).curry(pi2).!*
+11[1]:curry(tail.eval).curry(pi2)*!
+12[1]:curry(tail.eval)*curry(pi2).!
+13[1]:*curry(tail.eval).curry(pi2).!
+14:head.tail.eval*pair(curry(&).!,pi2.pair(&.&,&.&))
+15[1]:curry(pi2).!*
+16[1]:curry(pi2)*!
+17[1]:*curry(pi2).!
+18:head.tail.pi2*pair(!,pi2.pair(&.&,&.&))
+19:head.tail.pi2.pair(s.0,sum_seq.inf_inc_seq)*id
+20:head.tail.pi2*pair(s.0,sum_seq.inf_inc_seq)
+21:head.tail.sum_seq.inf_inc_seq*id
+22:head.tail.sum_seq.fold(id,s).0*id
+23:head.tail.sum_seq.fold(id,s)*0
+24:head.tail.sum_seq*fold(id,s).0
+25:head.tail.fold(pi2,pair(&.&,&.&)).pair(tail,head)*fold(id,s).0
+26:head.tail.fold(pi2,pair(&.&,&.&))*pair(tail,head).fold(id,s).0
+27:head.tail*fold(pi2,pair(&.&,&.&)).pair(tail,head).fold(id,s).0
+28:head.fold(pi2,pair(&.&,&.&)).pair(tail.pi1,add.pair(&.&,&))*pair(tail,
+    head).fold(id,s).0
+29:head.fold(pi2,pair(&.&,&.&))*pair(tail.pi1,add.pair(&.&,&)).pair(tail,
+    head).fold(id,s).0
+30:head*fold(pi2,pair(&.&,&.&)).pair(tail.pi1,add.pair(&.&,&)).pair(tail,
+    head).fold(id,s).0
+31:pi2*pair(tail.pi1,add.pair(&.&,&)).pair(tail,head).fold(id,s).0
+32:add.pair(head.pi1,pi2)*pair(tail,head).fold(id,s).0
+33:add*pair(head.pi1,pi2).pair(tail,head).fold(id,s).0
+34:eval.pair(pr(&,&).pi1,pi2)*pair(head.pi1,pi2).pair(tail,head).fold(id,
+    s).0
+35:eval*pair(pr(&,&).pi1,pi2).pair(head.pi1,pi2).pair(tail,head).fold(id,
+    s).0
+36[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2).pair(tail,head).fold(
+    id,s).0*
+37[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2).pair(tail,head).fold(
+    id,s)*0
+38[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2).pair(tail,head)*fold(
+    id,s).0
+39[1]:pr(curry(&),curry(&.&)).pi1.pair(head.pi1,pi2)*pair(tail,head).fold(
+    id,s).0
+40[1]:pr(curry(&),curry(&.&)).pi1*pair(head.pi1,pi2).pair(tail,head).fold(
+    id,s).0
+41[1]:pr(curry(&),curry(&.&)).head.pi1*pair(tail,head).fold(id,s).0
+42[1]:pr(curry(&),curry(&.&)).head.tail*fold(id,s).0
+43[1]:pr(curry(&),curry(&.&)).head.fold(id,s).s*0
+44[1]:pr(curry(&),curry(&.&)).head.fold(id,s)*s.0
+45[1]:pr(curry(&),curry(&.&)).head*fold(id,s).s.0
+46[1]:pr(curry(&),curry(&.&))*s.0
+47[1]:curry(s.eval).pr(curry(&),curry(&.&))*0
+48[1]:curry(s.eval).curry(pi2).!*
+49[1]:curry(s.eval).curry(pi2)*!
+50[1]:curry(s.eval)*curry(pi2).!
+51[1]:*curry(s.eval).curry(pi2).!
+52:s.eval*pair(curry(&).!,pi2.pair(&.&,&).pair(&,&).fold(&,&).0)
+53[1]:curry(pi2).!*
+54[1]:curry(pi2)*!
+55[1]:*curry(pi2).!
+56:s.pi2*pair(!,pi2.pair(&.&,&).pair(&,&).fold(&,&).0)
+57:s.pi2.pair(head.pi1,pi2).pair(tail,head).fold(id,s).0*id
+58:s.pi2.pair(head.pi1,pi2).pair(tail,head).fold(id,s)*0
+59:s.pi2.pair(head.pi1,pi2).pair(tail,head)*fold(id,s).0
+60:s.pi2.pair(head.pi1,pi2)*pair(tail,head).fold(id,s).0
+61:s.pi2*pair(head.pi1,pi2).pair(tail,head).fold(id,s).0
+62:s.pi2*pair(tail,head).fold(id,s).0
+63:s.head*fold(id,s).0
+64:s*0
+65:*s.0
+s.0
+    :1 -> nat
+cpl>set trace off
+cpl>set
+simplification mode: lazy
+trace off
+trace print depth 2
+line input mode
+print arrow normal
+cpl>simp nth.pair(s.s.s.0,sum_seq.inf_inc_seq)
+s.s.s.s.s.s.0
+    :1 -> nat
+cpl>simp nth.pair(s.s.0,sum_seq.inf_inc_seq)
+s.s.s.0
+    :1 -> nat
+cpl>simp nth.pair(s.s.s.s.0,sum_seq.inf_inc_seq)
+s.s.s.s.s.s.s.s.s.s.0
+    :1 -> nat
+cpl>simp nth.pair(s.s.s.s.s.0,sum_seq.inf_inc_seq)
+s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.0
+    :1 -> nat
+cpl>quit
+bye
+cheops>
+
+script done on Tue Jun  9 11:35:49 1987

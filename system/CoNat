@@ -1,0 +1,13 @@
+right object co_nat with copr
+  pred: co_nat -> coprod(1,co_nat)
+end object;
+
+let co_0 = copr(in1);
+
+let co_inf = copr(in2);
+
+let co_s = copr(coprod(id,pred)).in2;
+
+let pp = case(in1,pred);
+
+
