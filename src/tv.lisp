@@ -4,6 +4,11 @@
 
 (in-package :cpl)
 
+;;; Forward declarations
+(declaim (ftype (function (t t) t) tvap))
+(declaim (ftype (function (t t) t) tvcmd tvp))
+(declaim (ftype (function (t) t) tvpp tvpp0 tvpp1 tvpp2 tvpp3 tvpp4 tvpp5))
+
 ; an edit structure consists of (tail_list reverse_head_list stack)
 
 ; functions which manipulate edit structures

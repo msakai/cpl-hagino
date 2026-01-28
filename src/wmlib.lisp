@@ -1,15 +1,22 @@
 (in-package :cpl)
 
+;;; Forward declarations
+(declaim (ftype (function (t t) t) wdelete1))
+(declaim (ftype (function (t) t) we-out-s we-out-ls we-out-l))
+
 ;; macros
 
-(defmacro rascii (l)
-  (car (exploden (cadr l))))
+(defmacro rascii (ch)
+  "Get ASCII code of character - Franz Lisp compatibility"
+  (car (exploden ch)))
 
-(defmacro rctrl (l)
-  (- (car (exploden (cadr l))) 64))
+(defmacro rctrl (ch)
+  "Get control character code - Franz Lisp compatibility"
+  (- (car (exploden ch)) 64))
 
-(defmacro resc (l)
-  (+ (car (exploden (cadr l))) 128))
+(defmacro resc (ch)
+  "Get escape character code - Franz Lisp compatibility"
+  (+ (car (exploden ch)) 128))
 
 ;; window handler
 

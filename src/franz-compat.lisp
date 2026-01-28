@@ -43,6 +43,16 @@
    Common Lisp equivalent is TERPRI."
   (terpri stream))
 
+(defun tab (column &optional (stream *standard-output*))
+  "Tab to column position (Franz Lisp).
+   Prints spaces until current column is at or past the specified column."
+  (let ((current-col (or *charcnt* 0)))
+    (when (< current-col column)
+      (dotimes (i (- column current-col))
+        (write-char #\Space stream))
+      (setq *charcnt* column)))
+  nil)
+
 (defun drain (&optional (stream *standard-input*))
   "Drain (clear) input stream.
    Read and discard all pending input."
@@ -108,14 +118,38 @@
 
 (defun getd (symbol)
   "Get definition of function (Franz Lisp).
-   Returns function object or NIL."
-  (when (fboundp symbol)
-    (symbol-function symbol)))
+   Returns function object or NIL.
+   Handles functions, macros, and special operators."
+  (cond
+    ;; Try to get macro definition first
+    ((macro-function symbol)
+     (macro-function symbol))
+    ;; Then try function definition
+    ((fboundp symbol)
+     ;; Check if it's a special operator (can't be copied)
+     (if (special-operator-p symbol)
+         nil  ; Can't get definition of special operators
+         (symbol-function symbol)))
+    ;; Not defined
+    (t nil)))
 
 (defun putd (symbol definition)
   "Put definition of function (Franz Lisp).
-   Sets function definition."
-  (setf (symbol-function symbol) definition))
+   Sets function definition.
+   Handles functions and macros."
+  (cond
+    ;; If definition is a macro, use setf macro-function
+    ((and (consp definition)
+          (eq (car definition) 'macro))
+     (setf (macro-function symbol) (cdr definition)))
+    ;; Check if the definition looks like a macro function object
+    ((and (functionp definition)
+          (macro-function symbol))
+     ;; Already a macro, update it
+     (setf (macro-function symbol) definition))
+    ;; Otherwise treat as regular function
+    (t
+     (setf (symbol-function symbol) definition))))
 
 ;;; ==================================================================
 ;;; Size and Measurement
@@ -287,6 +321,27 @@
 ;;; List Operations
 ;;; ==================================================================
 
+(defun memq (item list)
+  "Member using EQ for comparison (Franz Lisp).
+   Returns tail of list starting with first occurrence of item, or NIL."
+  (member item list :test #'eq))
+
+(defun assq (item alist)
+  "Assoc using EQ for comparison (Franz Lisp).
+   Returns the first pair whose car is EQ to item, or NIL."
+  (assoc item alist :test #'eq))
+
+(defun concatl (list)
+  "Concatenate list of atoms/strings into a symbol (Franz Lisp).
+   Takes a list of symbols/strings/numbers and makes a single symbol."
+  (intern (apply #'concatenate 'string
+                 (mapcar (lambda (x)
+                           (cond ((symbolp x) (symbol-name x))
+                                 ((stringp x) x)
+                                 ((numberp x) (prin1-to-string x))
+                                 (t (prin1-to-string x))))
+                         list))))
+
 (defun hunk (&rest args)
   "Create a hunk (vector-like structure in Franz Lisp).
    In Common Lisp, we use vectors."
@@ -396,6 +451,38 @@
 ;; Common Lisp symbols. CPL code doesn't actually use them, so we omit them.
 
 ;;; ==================================================================
+;;; Top-level Read/Print Infrastructure
+;;; ==================================================================
+
+;; User-selectable top-level read and print functions
+(defvar top-level-read nil
+  "User-defined top-level read function, or NIL for default")
+
+(defvar top-level-print nil
+  "User-defined top-level print function, or NIL for default")
+
+;; These will be defined by wtrace.lisp, but we provide stubs here
+(defun T-read (&rest args)
+  "Untraceable READ function (stub, overridden by wtrace)"
+  (apply #'read args))
+
+(defun T-print (x)
+  "Untraceable PRINT function (stub, overridden by wtrace)"
+  (print x))
+
+(defmacro top-print (&rest args)
+  "Top-level print - uses top-level-print if set, otherwise T-print"
+  `(cond (top-level-print (funcall top-level-print ,@args))
+         (t (T-print ,@args))))
+
+(defmacro top-read (&rest args)
+  "Top-level read - uses top-level-read if set, otherwise T-read"
+  `(cond ((and top-level-read
+               (T-getd top-level-read))
+          (funcall top-level-read ,@args))
+         (t (T-read ,@args))))
+
+;;; ==================================================================
 ;;; Compatibility Notes
 ;;; ==================================================================
 
@@ -409,12 +496,15 @@
   "Return compatibility layer version"
   "Franz Lisp Compatibility Layer for SBCL v1.0")
 
-(export '(tyi tyo tyipeek ascii readc terpr drain
+(export '(tyi tyo tyipeek ascii readc terpr drain tab
           dtpr bcdp exploden implode maknam concat uconcat
           defprop getd putd flatc flatsize errset
           infile outfile filepos charcnt probef fileopen
           status sstatus def add1 sub1 hunk
           copysymbol remob oblist
+          memq assq concatl
+          top-level-read top-level-print top-print top-read
+          T-read T-print
           T-terpr T-drain T-patom T-status T-sstatus
           T-getd T-putd T-getdisc patom putprop delq
           nwritn))

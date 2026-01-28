@@ -99,6 +99,21 @@
 ;; $system-mode is either 'line or 'window
 (setq $system-mode 'line)
 
+;;; Forward declarations for mutually recursive functions
+(declaim (ftype (function (t) t)
+                object odecl ooccur oprodchk oprinl ohead ounit odom
+                ofunc ofunmod ofunmoda ofunmodaa
+                maux mauxp morph0 morph muniv mfun mfungt
+                mnewvar mpair msubsto msubstol msubstoll munify
+                mgetvo mgetvol mnewvara mcomp mcomp1
+                pmobj pobj pmorph pmorphl
+                oshow1 oshow2 oclear odell odelm odelmd odelmdm odelmdml
+                odelo odelod odelodm odelodml odelodo odelodol
+                oincdo oincdol oincm oincml oincmll oinco
+                oexp oexpml ogtnum
+                revapp simpl sprod suu suuget
+                top-read top-print de-extract-1 de-extract-functor))
+
 (defmacro nterpri ()
   '(progn (tyo 13) (terpri)))
 
@@ -1692,7 +1707,11 @@
 	       (cond ((or (not stand-alone)
 			  (and (cdr tokl) (eq (cadr tokl) 'lisp)))
 		      (return nil))
-		     (t (cl:quit))))
+		     (t #+sbcl (sb-ext:quit)
+                        #+ccl (ccl:quit)
+                        #+clisp (ext:quit)
+                        #+ecl (ext:quit)
+                        #-(or sbcl ccl clisp ecl) (error "Don't know how to quit"))))
 	      ((eq (car tokl) 'edit) (wc-edit (cdr tokl)))
 	      ((eq (car tokl) 'let) (maux (cdr tokl)))
 	      ((eq (car tokl) 'delete)
@@ -2118,10 +2137,17 @@
 	(princ " defined")
 	(nterpri)))
 
-;; bootsrap
-(load "wdia")
-(load "wcathelp")
-(load "wmlib")
+;; bootstrap - load supporting modules if not already loaded
+;; (Skip when building standalone executable where all files are pre-loaded)
+;; Set *modules-preloaded* to T in build script to skip this
+(defvar *modules-preloaded* nil
+  "Set to T when building executable with all modules pre-loaded")
+
+(eval-when (:load-toplevel :execute)
+  (unless *modules-preloaded*
+    (load "wdia")
+    (load "wcathelp")
+    (load "wmlib")))
 
 (defun wc ()
   (prog (args debug)

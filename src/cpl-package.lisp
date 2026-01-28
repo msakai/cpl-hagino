@@ -5,6 +5,8 @@
 
 (defpackage :cpl
   (:use :cl)
+  ;; Shadow symbols that conflict with CL package
+  (:shadow #:trace #:untrace)
   (:export
    ;; Main entry point
    #:main

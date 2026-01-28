@@ -11,9 +11,13 @@
 (in-package :cpl)
 
 ;;; Special variables
+;; Note: 'if' and 'ifnot' are NOT defined as global variables because:
+;; 1. 'if' conflicts with CL:IF (locked symbol)
+;; 2. They are only used as local variables within trace-impl
+;; Other variables below may also be primarily local but are kept for compatibility
 (defvar piport nil)
-(defvar if nil)
-(defvar ifnot nil)
+;; (defvar if nil)          ; REMOVED: conflicts with CL:IF, only used locally
+;; (defvar ifnot nil)       ; REMOVED: only used locally
 (defvar evalin nil)
 (defvar evalout nil)
 (defvar printargs nil)
@@ -48,6 +52,8 @@
 ;;;	names and make them equivalent at this time to their
 ;;;	traceable counterparts.
 (defun trace-startup-func ()
+  "Create untraceable copies of system functions.
+   Skip special operators and undefined functions."
   (dolist (i '((1+ T-add1) (append T-append)
 	       (and T-and) (apply T-apply)
 	       (cond T-cond) (cons T-cons) (delete T-delq)
@@ -65,7 +71,9 @@
 	       (status T-status) (sstatus T-sstatus)
 	       (1- T-sub1)
 	       (zerop T-zerop)))
-    (putd (cadr i) (getd (car i)))
+    (let ((def (getd (car i))))
+      (when def  ; Only copy if we got a valid definition
+        (putd (cadr i) def)))
     (putprop (cadr i) t 'Untraceable)))
 
 (trace-startup-func)

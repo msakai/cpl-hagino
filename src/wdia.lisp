@@ -7,32 +7,41 @@
 
 (in-package :cpl)
 
+;;; Forward declarations
+(declaim (ftype (function (t) t)
+                de-display de-display-list de-eval de-eval-1
+                de-extract-1 de-extract-functor de-extract-list de-extract-list-list
+                de-get-var-list de-parse de-pick de-pick-list
+                de-print-1 de-print-comp de-replace de-replace-list
+                de-scroll de-subst))
+
 ;;
 ;; Macros
 ;;
 
-(defmacro nterpri (l)
+(defmacro nterpri ()
   '(progn (tyo 13) (terpri)))
 
-(defmacro rascii (l)
-  (car (exploden (cadr l))))
+(defmacro rascii (ch)
+  "Get ASCII code of character"
+  (car (exploden ch)))
 
-(defmacro rarrow (l)
+(defmacro rarrow ()
   ''|->|)
 
-(defmacro rcolon (l)
+(defmacro rcolon ()
   ''|:|)
 
-(defmacro rcomp (l)
+(defmacro rcomp ()
   ''|.|)
 
-(defmacro rrcomp (l)
+(defmacro rrcomp ()
   ''|\||)
 
-(defmacro rlpar (l)
+(defmacro rlpar ()
   ''|(|)
 
-(defmacro rrpar (l)
+(defmacro rrpar ()
   ''|)|)
 
 (defmacro rcomma (l)
