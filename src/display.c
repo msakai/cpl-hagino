@@ -54,8 +54,14 @@
 */
 
 #include <stdio.h>
-#include "display.h"
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <sgtty.h>
+#include "display.h"
+
+/* External function declarations */
+extern void TrmTERM(const char *tname);
 
 /* the following macros are used to access terminal specific routines.
    Really, no one outside of display.c should be using them, except for
@@ -105,7 +111,7 @@ hidden struct line {		/* a line as it appears in a list of
                    *NLScratch;	/* scratch for use by the newline macro 
 				*/
 
-hidden WindowSize;		/* the number of lines on which line ID
+static int WindowSize;		/* the number of lines on which line ID
 				   operations should be done */
 int baud_rate;			/* Terminal speed, so we can calculate
 				   the number of characters required to
@@ -113,8 +119,8 @@ int baud_rate;			/* Terminal speed, so we can calculate
 
 /* 'newline' returns a pointer to a new line object, either from the
    free list or from the general unix pool */
-struct line *newline () {
-    register struct line   *p = FreeLines;
+static struct line *newline(void) {
+    struct line *p = FreeLines;
 
     if (p) {
 	FreeLines = p -> next;
@@ -124,9 +130,9 @@ struct line *newline () {
 	}
     }
     else {
-	static Leakage;
-	p = (struct line   *) malloc (sizeof *p);
-	if (++Leakage>150) printf ("*****Display core leakage!");
+	static int Leakage = 0;
+	p = (struct line *) malloc(sizeof *p);
+	if (++Leakage > 150) printf("*****Display core leakage!");
     }
     p -> length = 0;
     p -> hash = 0;
@@ -135,8 +141,7 @@ struct line *newline () {
 }
 
 /* 'ReleaseLine' returns a line object to the free list */
-hidden procedure ReleaseLine (p)
-register struct line   *p; {
+static void ReleaseLine(struct line *p) {
     if (p) {
 	if (p -> hash == 12345) {
 	    printf("\rBogus re-release!");
@@ -154,6 +159,14 @@ hidden struct line *PhysScreen[MScreenLength + 1];
  /* the current (physical) screen */
 hidden struct line *DesiredScreen[MScreenLength + 1];
  /* the desired (virtual) screen */
+
+/* Forward declarations */
+static struct line *newline(void);
+static void ReleaseLine(struct line *p);
+static void hashline(struct line *p);
+static void calcM(void);
+static void CalcID(int i, int j, int InsertsDesired);
+static void UpdateLine(struct line *old, struct line *new, int ln);
 
 visible int
             ScreenGarbaged,	/* set to 1 iff screen content is
@@ -173,11 +186,9 @@ visible char
 
 /* 'setpos' positions the cursor at position (row,col) in the virtual
    screen */
-visible procedure setpos (row, col)
-register    row,
-            col; {
-    register struct line   *p;
-    register    n;
+void setpos(int row, int col) {
+    struct line *p;
+    int n;
 
     if (CurrentLine >= 0
 	    && (p = DesiredScreen[CurrentLine]) -> length
@@ -195,13 +206,13 @@ register    row,
 
 /* 'clearline' positions the cursor at the beginning of the
    indicated line and clears the line (in the image) */
-clearline (row) {
+void clearline(int row) {
     setpos (row, 1);
     DesiredScreen[row] -> length = 0;
 }
 
 /* 'HighLine' causes the current line to be highlighted */
-HighLine () {
+void HighLine(void) {
     if (CurrentLine >= 0)
 	DesiredScreen[CurrentLine] -> highlighted++;
 }
@@ -210,18 +221,15 @@ HighLine () {
    is already known.  This hash code has a few important properties:
 	- it is independant of the number of leading and trailing spaces
 	- it will never be zero
- 
+
    As a side effect, an estimate of the cost of redrawing the line is
    calculated */
-hidden procedure hashline (p)
-register struct line   *p; {
-    register char  *c,
-                   *l;
-    register    h,
-                cost;
+static void hashline(struct line *p) {
+    char *c, *l;
+    int h;
 
     if (!p || p -> hash) {
-	if (p && p->hash==12345) printf ("****Free line in screen");
+	if (p && p->hash==12345) printf("****Free line in screen");
 	return;
     }
     h = 0;
@@ -262,16 +270,11 @@ hidden struct Msquare {
 				   the optimal move comes from */
 }                       M[MScreenLength + 1][MScreenLength + 1];
 
-hidden procedure calcM () {
-    register struct Msquare *p;
-    register    i,
-                j,
-                movecost,
-                cost;
-    int     reDrawCost,
-            idcost,
-            leftcost;
-    double  fidcost;
+static void calcM(void) {
+    struct Msquare *p;
+    int i, j, movecost, cost;
+    int reDrawCost, idcost, leftcost;
+    double fidcost;
 
     cost = 0;
     movecost = 0;
@@ -336,12 +339,9 @@ hidden procedure calcM () {
 /* calculate and perform the optimal sequence of insertions/deltions
    given the matrix M from routine calcM */
 
-hidden procedure CalcID (i, j, InsertsDesired)
-register    i,
-            j; {
-    register    ni,
-                nj;
-    register struct Msquare *p = &M[i][j];
+static void CalcID(int i, int j, int InsertsDesired) {
+    int ni, nj;
+    struct Msquare *p = &M[i][j];
     if (i > 0 || j > 0) {
 	ni = p -> fromi;
 	nj = p -> fromj;
@@ -357,8 +357,7 @@ register    i,
 	else
 	    if (nj == j) {
 		if (j != WindowSize) {
-		    register    nni,
-		                dlc = 1;
+		    int nni, dlc = 1;
 		    for (; ni;) {
 			p = &M[ni][nj];
 			nni = p -> fromi;
@@ -412,23 +411,9 @@ register    i,
 	m2		- length of a trailing matching sequence
 	nd, od		- length of the differing sequences
  */
-hidden procedure UpdateLine (old, new, ln)
-register struct line	*old,
-			*new; {
-    register char	*op,
-			*np,
-			*ol,
-			*nl;
-    int	osp,
-	nsp,
-	m1,
-	m2,
-	od,
-	nd,
-	OldHL,
-	NewHL,
-	s,
-	t;
+static void UpdateLine(struct line *old, struct line *new, int ln) {
+    char *op, *np, *ol, *nl;
+    int osp, nsp, m1, m2, od, nd, OldHL, NewHL, s, t;
 
     if (old == new)
 	return;
@@ -446,7 +431,7 @@ register struct line	*old,
     }
     else
 	np = "", nl = np, NewHL = 0;
-    osp = nsp = m1 = m2 = od = od = 0;
+    osp = nsp = m1 = m2 = od = 0;
 
 /* calculate the magic parameters */
     if (NewHL == OldHL) {
@@ -473,31 +458,28 @@ register struct line	*old,
 
 /* forget matches which would be expensive to capitalize on */
     if (m1 || m2) {
-	register int    c0,
-	                c1,
-	                c2,
-	                c3;
+	int c0, c1, c2, c3;
 	c0 = nsp + m1 + m2;
-	if (c1 = nsp - osp)
+	if ((c1 = nsp - osp) != 0)
 	    c1 = c1<0 ? tt.t_DCov - c1*tt.t_DCmf
 		      : tt.t_ICov + c1*tt.t_ICmf;
-	if (c3 = nd - od)
+	if ((c3 = nd - od) != 0)
 	    c3 = c3<0 ? tt.t_DCov - c3*tt.t_DCmf
 		      : tt.t_ICov + c3*tt.t_ICmf;
-	if (c2 = (nsp + nd) - (osp + od))
+	if ((c2 = (nsp + nd) - (osp + od)) != 0)
 	    c2 = c2<0 ? tt.t_DCov - c2*tt.t_DCmf
 		      : tt.t_ICov + c2*tt.t_ICmf;
 	c3 += c1;
 	c1 += m2;
 	c2 += m1;
-	if (m2 && (c0 < c2 && c0 < c3 || c1 < c2 && c1 < c3)) {
+	if (m2 && ((c0 < c2 && c0 < c3) || (c1 < c2 && c1 < c3))) {
 	    nd += m2;
 	    od += m2;
 	    ol += m2;
 	    nl += m2;
 	    m2 = 0;
 	}
-	if (m1 && (c0 < c1 && c0 < c3 || c2 < c1 && c2 < c3)) {
+	if (m1 && ((c0 < c1 && c0 < c3) || (c2 < c1 && c2 < c3))) {
 	    nd += m1;
 	    od += m1;
 	    np -= m1;
@@ -512,7 +494,7 @@ register struct line	*old,
     (*tt.t_HLmode) (NewHL);
     if (NewHL != OldHL) {
 	topos (ln, 1);
-	wipeline (1);
+	wipeline ();
     }
     if (m1 == 0)
 	if (m2 == 0) {
@@ -526,7 +508,7 @@ register struct line	*old,
 		blanks (nsp - osp);
 	    dumpstring (np, nl);
 	    if (nsp + nd < osp + od)
-		wipeline (0);
+		wipeline ();
 	}
 	else {			/* m1==0 && m2!=0 && (nd!=0 || od!=0) */
 	    t = (nsp + nd) - (osp + od);
@@ -543,7 +525,7 @@ register struct line	*old,
 		INSmode (0), dumpstring (np, nl), deletechars (-t);
 	}
     else {			/* m1!=0 */
-	register    lsp = osp;
+	int lsp = osp;
 	if (nsp < osp) {
 	    topos (ln, 1);
 	    deletechars (osp - nsp);
@@ -564,7 +546,7 @@ register struct line	*old,
 	    INSmode (0);
 	    dumpstring (np, nl);
 	    if (nd < od)
-		wipeline (0);
+		wipeline ();
 	    if (nsp > osp) {
 		topos (ln, 1);
 		INSmode (1);
@@ -591,10 +573,9 @@ register struct line	*old,
 cleanup:;
 }
 
-visible procedure UpdateScreen (SlowUpdate) {
-    register    n,
-                c;
-    register struct Msquare *p;
+void UpdateScreen(int SlowUpdate) {
+    int n, c;
+    struct Msquare *p;
 
     if (ScreenGarbaged) {
 	reset ();
@@ -674,16 +655,14 @@ visible procedure UpdateScreen (SlowUpdate) {
 }
 
 /* initialize the teminal package */
-term_init ()
-{
-    static short    baud_convert[] =
-    {
+void term_init(void) {
+    static const short baud_convert[] = {
 	0, 50, 75, 110, 135, 150, 200, 300, 600, 1200,
 	1800, 2400, 4800, 9600
     };
-    struct sgttyb   sg;
-    extern short    ospeed;
-    char *tname;
+    struct sgttyb sg;
+    extern short ospeed;
+    const char *tname;
 
     RDdebug = 0;		/* line redraw debug switch */
     IDdebug = 0;		/* line insertion/deletion debug */
@@ -693,15 +672,15 @@ term_init ()
 				   virtual screen. */
     left = -1;			/* number of columns left on the current
 				   line of the virtual screen. */
-    tname = (char *) getenv ("TERM");
-    if (tname == 0) tname = "vi200";
-    gtty (fileno (stdin), &sg);
+    tname = getenv("TERM");
+    if (tname == NULL) tname = "vi200";
+    gtty(fileno(stdin), &sg);
     ospeed = sg.sg_ospeed;
     baud_rate = sg.sg_ospeed == 0 ? 1200
 	: sg.sg_ospeed < sizeof baud_convert / sizeof baud_convert[0]
 	? baud_convert[sg.sg_ospeed] : 9600;
-    TrmTERM (tname);
-    (*tt.t_init) (baud_rate);
+    TrmTERM(tname);
+    (*tt.t_init)(baud_rate);
 /*    (*tt.t_reset) ();  */
 }
 

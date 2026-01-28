@@ -1,0 +1,27 @@
+/* config.h.in - Configuration header for CPL */
+
+#ifndef CPL_CONFIG_H
+#define CPL_CONFIG_H
+
+/* Platform detection */
+#cmakedefine HAVE_TERMIOS_H
+#cmakedefine HAVE_PTY_H
+#cmakedefine HAVE_UTIL_H
+
+/* Terminal capabilities */
+#ifdef HAVE_TERMIOS_H
+#define CPL_HAVE_TERMIOS 1
+#endif
+
+/* PTY support */
+#if defined(HAVE_PTY_H) || defined(HAVE_UTIL_H)
+#define CPL_HAVE_PTY 1
+#endif
+
+/* Version information */
+#define CPL_VERSION "@PROJECT_VERSION@"
+#define CPL_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define CPL_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define CPL_VERSION_PATCH @PROJECT_VERSION_PATCH@
+
+#endif /* CPL_CONFIG_H */

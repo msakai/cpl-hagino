@@ -3,28 +3,28 @@
 /*		Copyright (c) 1981,1980 James Gosling		*/
 
 struct TrmControl {
-    int     (*t_topos) ();	/* move the cursor to the indicated
+    int     (*t_topos) (int, int);	/* move the cursor to the indicated
 				   (row,column); (1,1) is the upper left */
-    int     (*t_reset) ();	/* reset terminal (screen is in unkown state,
+    int     (*t_reset) (void);	/* reset terminal (screen is in unkown state,
 				   convert it to a known one) */
-    int     (*t_INSmode) ();	/* set or reset character insert mode */
-    int     (*t_HLmode) ();	/* set or reset highlighting */
-    int     (*t_inslines) ();	/* insert n lines */
-    int     (*t_dellines) ();	/* delete n lines */
-    int     (*t_blanks) ();	/* print n blanks */
-    int     (*t_init) ();	/* initialize terminal settings */
-    int     (*t_cleanup) ();	/* clean up terminal settings */
-    int     (*t_wipeline) ();	/* erase to the end of the line */
-    int     (*t_wipescreen) ();	/* erase the entire screen */
-    int     (*t_wipedisplay) ();/* erase to the end of the display */
-    int     (*t_delchars) ();	/* delete n characters */
-    int     (*t_writechars) ();	/* write characters; either inserting or
+    int     (*t_INSmode) (int);	/* set or reset character insert mode */
+    int     (*t_HLmode) (int);	/* set or reset highlighting */
+    int     (*t_inslines) (int);	/* insert n lines */
+    int     (*t_dellines) (int);	/* delete n lines */
+    int     (*t_blanks) (int);	/* print n blanks */
+    int     (*t_init) (int);	/* initialize terminal settings */
+    int     (*t_cleanup) (void);	/* clean up terminal settings */
+    int     (*t_wipeline) (void);	/* erase to the end of the line */
+    int     (*t_wipescreen) (void);	/* erase the entire screen */
+    int     (*t_wipedisplay) (void);/* erase to the end of the display */
+    int     (*t_delchars) (int);	/* delete n characters */
+    int     (*t_writechars) (char *, char *);	/* write characters; either inserting or
 				   overwriting according to the current
 				   character insert mode. */
-    int     (*t_window) ();	/* set the screen window so that IDline
+    int     (*t_window) (int);	/* set the screen window so that IDline
 				   operations only affect the first n
 				   lines of the screen */
-    int     (*t_flash) ();	/* Flash the screen -- not set if this
+    int     (*t_flash) (void);	/* Flash the screen -- not set if this
 				   terminal type won't support it. */
 /* costs are expressed as number_affected*mf + ov
 	cost to insert/delete 1 line: (number of lines left)*ILmf+ILov

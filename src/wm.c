@@ -2,7 +2,13 @@
  * super (?) window terminal driver
  *
  *	By Tatsuya Hagino   June 1984 (revised October 1984)
+ *	Modernized to ANSI C (C11) 2026
  */
+
+/* include config first */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 /* define */
 #define NOFLOWCTL
@@ -36,20 +42,83 @@
 
 /* public include files */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <signal.h>
-#include <sgtty.h>
+#include <termios.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <sys/time.h>
+#include <sys/select.h>
+#include <limits.h>
+#include <errno.h>
+
+/* Termcap function declarations */
+extern int tputs(const char *str, int affcnt, int (*putc)(int));
+extern char *tgetstr(const char *id, char **area);
+extern int tgetent(char *bp, const char *name);
+extern int tgetnum(const char *id);
+extern int tgetflag(const char *id);
+extern char *tgoto(const char *cap, int col, int row);
+
+/* PTY handling - try various headers */
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <util.h>
+#elif defined(__linux__)
+#include <pty.h>
+#else
+/* Fall back to BSD-style PTY on other systems */
+#define USE_BSD_PTY
+#endif
+
+/* Compatibility for old terminal interface */
+#ifndef HAVE_TERMIOS
+#include <sgtty.h>
+#else
+/* Define sgttyb structure in terms of termios for compatibility */
+struct sgttyb {
+    char sg_ispeed;
+    char sg_ospeed;
+    char sg_erase;
+    char sg_kill;
+    int sg_flags;
+};
+struct tchars {
+    char t_intrc;
+    char t_quitc;
+    char t_startc;
+    char t_stopc;
+    char t_eofc;
+    char t_brkc;
+};
+struct ltchars {
+    char t_suspc;
+    char t_dsuspc;
+    char t_rprntc;
+    char t_flushc;
+    char t_werasc;
+    char t_lnextc;
+};
+/* Emulate old flags */
+#define RAW 0040
+#define ECHO 010
+#define TANDEM 0
+#endif
 
 /* private include files */
 #include "display.h"
 #include "winlib.h"
 
+/* Forward declarations */
+struct pro_str;
+
 /* types */
-typedef ((*funcptr)());
+typedef int (*funcptr)(char, int, struct pro_str *);
+typedef int (*sfuncptr)(int, struct pro_str *);  /* string processing function */
 
 /* structures */
 struct win_str *winlist[MAX_WINDOWS];	/* window list */
@@ -81,7 +150,7 @@ struct pro_str {
     char pro_sbuf[MAX_STR];
     char *pro_sbuf_pointer;
     char pro_mch;
-    funcptr pro_sdo;
+    sfuncptr pro_sdo;
     } *prolist[MAX_PROCESSES];		/* process list */
 
 struct {
@@ -100,91 +169,200 @@ struct {
 
 struct {
     funcptr do_mouse;			/* mouse driver */
-    char *mouse_msg;			/* message */
+    const char *mouse_msg;		/* message */
     } mouse_table[10+4+1];		/* mouse table */
 
-/* function pre-definition */
-char	*getenv();
-int	finish();
-int	doaddch();
-int	doesc();
+/* function prototypes */
+static void writehelp(void);
+static void initialize(void);
+static void gettty(void);
+static void fixtty(void);
+static int dumpchar(int c);
+static void initwin(void);
+static void initfnkey(void);
+static void startprocess(int p, int w);
+static void finish(int sig);
+static void killedprocess(int p);
+void done(void);  /* non-static, called from term.c */
+static void stopprocess(int p);
+static void process(void);
+static void processoutput(int p);
+static void processinput(void);
+static int funkeycheck(const char *fk);
+static void sendtoprocess(struct pro_str *proc, char ch);
+static void sendstringtoprocess(struct pro_str *proc, const char *str);
+static int doaddch(char ch, int p, struct pro_str *proc);
+static void nowindow(int p);
+static void dorefresh(void);
+static int doesc(char ch, int p, struct pro_str *proc);
+static int dopushzero(char ch, int p, struct pro_str *proc);
+static int dodigit(char ch, int p, struct pro_str *proc);
+static int dosetplus(char ch, int p, struct pro_str *proc);
+static int dosetminus(char ch, int p, struct pro_str *proc);
+static int doseton(char ch, int p, struct pro_str *proc);
+static int dosetoff(char ch, int p, struct pro_str *proc);
+static int fin(char ch, int p, struct pro_str *proc);
+static int doansiesc(char ch, int p, struct pro_str *proc);
+static int doansi(char ch, int p, struct pro_str *proc);
+static int docursor(char ch, int p, struct pro_str *proc);
+static int evalarg(struct pro_str *proc, int n, int d, int p, int min, int max);
+static int docursorv2(char ch, int p, struct pro_str *proc);
+static int docursorv1(char ch, int p, struct pro_str *proc);
+static int docursorv(char ch, int p, struct pro_str *proc);
+static int doeeol(char ch, int p, struct pro_str *proc);
+static int doeeos(char ch, int p, struct pro_str *proc);
+static int doeeosv(char ch, int p, struct pro_str *proc);
+static int doup(char ch, int p, struct pro_str *proc);
+static int dodown(char ch, int p, struct pro_str *proc);
+static int doright(char ch, int p, struct pro_str *proc);
+static int doleft(char ch, int p, struct pro_str *proc);
+static int dohome(char ch, int p, struct pro_str *proc);
+static int docld(char ch, int p, struct pro_str *proc);
+static int dolinsert(char ch, int p, struct pro_str *proc);
+static int doldelete(char ch, int p, struct pro_str *proc);
+static int dosetins(char ch, int p, struct pro_str *proc);
+static int doresetins(char ch, int p, struct pro_str *proc);
+static int dodelchar(char ch, int p, struct pro_str *proc);
+static int dodelchars(char ch, int p, struct pro_str *proc);
+static int doredraw(char ch, int p, struct pro_str *proc);
+static int doreverselinefeed(char ch, int p, struct pro_str *proc);
+static int dosetscroll(char ch, int p, struct pro_str *proc);
+static int dostandout(char ch, int p, struct pro_str *proc);
+static int dospecialesc(char ch, int p, struct pro_str *proc);
+static int dospecial(char ch, int p, struct pro_str *proc);
+static int dosetmode(char ch, int p, struct pro_str *proc);
+static int dosetecho(char ch, int p, struct pro_str *proc);
+static int dosetraw(char ch, int p, struct pro_str *proc);
+static int dosetdump(char ch, int p, struct pro_str *proc);
+static int dosetkill(char ch, int p, struct pro_str *proc);
+static int dosetstop(char ch, int p, struct pro_str *proc);
+static int dosetmouse(char ch, int p, struct pro_str *proc);
+static int dostring(char ch, int p, struct pro_str *proc);
+static int docopys(int p, struct pro_str *proc);
+static int docopy(char ch, int p, struct pro_str *proc);
+static int dosetfnkeys(int p, struct pro_str *proc);
+static int dosetfnkey(char ch, int p, struct pro_str *proc);
+static int dopsdins(int p, struct pro_str *proc);
+static int dopsdin(char ch, int p, struct pro_str *proc);
+static int dosetbase(char ch, int p, struct pro_str *proc);
+static int dogivekeyboard(char ch, int p, struct pro_str *proc);
+static int dokillprocess(char ch, int p, struct pro_str *proc);
+static int dostartprocess(char ch, int p, struct pro_str *proc);
+static int doprlesc(char ch, int p, struct pro_str *proc);
+static int doprl(char ch, int p, struct pro_str *proc);
+static int docreate(char ch, int p, struct pro_str *proc);
+static void dowinfo(int w);
+static int dodestroy(char ch, int p, struct pro_str *proc);
+static int doenquire(char ch, int p, struct pro_str *proc);
+static int doselect(char ch, int p, struct pro_str *proc);
+static int dopopwindow(char ch, int p, struct pro_str *proc);
+static int doreposwindow(char ch, int p, struct pro_str *proc);
+static int dopageselect(char ch, int p, struct pro_str *proc);
+static int dopageforward(char ch, int p, struct pro_str *proc);
+static int dopagebackward(char ch, int p, struct pro_str *proc);
+static int doscroll(char ch, int p, struct pro_str *proc);
+static int doheadings(int p, struct pro_str *proc);
+static int doheading(char ch, int p, struct pro_str *proc);
+static void domouseend(void);
+static void domouse(void);
+static void createmouse(void);
+static void wmsetwnum(void);
+static void domousehome(void);
+static void domouseup(void);
+static void domousedown(void);
+static void domouseright(void);
+static void domouseleft(void);
+static void dosetmark(void);
+static void doresetinput(void);
+static void domousecreate(void);
+static int dosearchwin(struct win_str *win);
+static void domousedelete(void);
+static void domousemove(void);
+static void domousecopy(void);
+static void domousenext(void);
+static void domouseback(void);
+static void domousepush(void);
+static void domouseprocessselect(void);
+static void domouseprocessnext(void);
+static void initmouse(void);
+static void initeachtbl(funcptr *tbl);
+static void inittbl(void);
 
 /* data */
-char	*shell;				/* default shell name */
-int	is_shell;			/* is it really a shell */
-int	is_cshell;			/* is it a c shell */
+static char *shell;			/* default shell name */
+static int is_shell;			/* is it really a shell */
+static int is_cshell;			/* is it a c shell */
 
 extern struct win_str *top_win;		/* top window */
 
-char	i_buf[BUFSIZ];			/* input buffer */
-char	o_buf[BUFSIZ];			/* output buffer */
+static char i_buf[BUFSIZ];		/* input buffer */
+static char o_buf[BUFSIZ];		/* output buffer */
 
-struct pro_str *current_process;	/* current input process */
-int	current_process_number;		/* current input process number */
+static struct pro_str *current_process;	/* current input process */
+static int current_process_number;	/* current input process number */
 
-char	fn_key_buf[10];			/* function key buffer */
-char	*fn_key_buf_pointer;		/* function key buffer pointer */
+static char fn_key_buf[10];		/* function key buffer */
+static char *fn_key_buf_pointer;	/* function key buffer pointer */
 
-int kill_character = 28;		/* kill character (default ^\) */
+static int kill_character = 28;		/* kill character (default ^\) */
 
-funcptr ansitable[0200];		/* ansi escape sequence */
-funcptr vi200table[0200];		/* vi200 escape sequnce */
-funcptr prltable[0200];			/* window escape sequence */
-funcptr specialtable[0200];		/* special escape sequence */
+static funcptr ansitable[0200];		/* ansi escape sequence */
+static funcptr vi200table[0200];	/* vi200 escape sequnce */
+static funcptr prltable[0200];		/* window escape sequence */
+static funcptr specialtable[0200];	/* special escape sequence */
 
-struct win_str *mousewin;		/* mouse window */
-struct win_str *mousemark;		/* mouse mark */
-int mouse_win_number;			/* mouse window number */
-int mouse_page_number;			/* mouse page number */
-int mouse_process_number;
-int mouse_increment;			/* cursor increment */
-int mouse_input_window;
-int mouse_input_page;
-int mouseY,mouseX;			/* mouse position */
-char *mouse_copy_file;			/* hardcopy file name */
+static struct win_str *mousewin;	/* mouse window */
+static struct win_str *mousemark;	/* mouse mark */
+static int mouse_win_number;		/* mouse window number */
+static int mouse_page_number;		/* mouse page number */
+static int mouse_process_number;
+static int mouse_increment;		/* cursor increment */
+static int mouse_input_window;
+static int mouse_input_page;
+static int mouseY, mouseX;		/* mouse position */
+static char *mouse_copy_file;		/* hardcopy file name */
 
-struct win_str *statuswin;		/* status window */
+static struct win_str *statuswin;	/* status window */
 
-int input_freq;				/* input service frequency */
+static int input_freq;			/* input service frequency */
 
-char fn_key_char;			/* function key common starter */
+static char fn_key_char;		/* function key common starter */
 
 /* flags */
-int statusmode;				/* status mode */
+static int statusmode;			/* status mode */
 
-int dumpmode;				/* dump mode */
+static int dumpmode;			/* dump mode */
 
-int mousemode;				/* mouse mode */
-int mousemark_set;			/* mouse mark set/reset */
-int mouse_input_number;			/* mouse input mode */
-int mouse_flag;				/* mouse capability */
+static int mousemode;			/* mouse mode */
+static int mousemark_set;		/* mouse mark set/reset */
+static int mouse_input_number;		/* mouse input mode */
+static int mouse_flag;			/* mouse capability */
 
-int fn_key_partial_match;
+static int fn_key_partial_match;
 
-int new_mask;				/* input mask recalculation */
+static int new_mask;			/* input mask recalculation */
 
-char **nenvp;				/* new environment */
-int new_envp;
+static char **nenvp;			/* new environment */
+static int new_envp;
 
-int stoppable;				/* stop */
-char stopch;
+static int stoppable;			/* stop */
+static char stopch;
 
 /* program */
 
-char **sub_argv;
-char *sub_init_str;
-int sub_init_lf;
+static char **sub_argv;
+static char *sub_init_str;
+static int sub_init_lf;
 
-main(argc,argv,envp)
-int argc;
-char **argv,**envp;
+int
+main(int argc, char **argv, char **envp)
 {
 	char *cp;
-	int help,l,sub_argc;
+	int help, l, sub_argc;
 
 	mouse_copy_file = NULL;
-	statusmode = FALSE;
-	help = FALSE;
+	statusmode = 0;
+	help = 0;
 	nenvp = envp;
 
 	if (!(shell = getenv("WSHELL")))
@@ -197,7 +375,7 @@ char **argv,**envp;
 	sub_argc = 0;
 	sub_argv = argv;
 	sub_init_str = 0;
-	sub_init_lf = FALSE;
+	sub_init_lf = 0;
 	while (argc > 1) {
 	    if (*argv[1] == '-') {
 		cp = argv[1];
@@ -207,15 +385,15 @@ char **argv,**envp;
 			      sub_argc = 1;
 			      argc = 0;
 			      break;
-		    case 's': statusmode = TRUE;
+		    case 's': statusmode = 1;
 			      break;
-		    case 'h': help = TRUE;
+		    case 'h': help = 1;
 			      break;
-		    case 'q': stoppable = TRUE;
+		    case 'q': stoppable = 1;
 			      break;
-		    case 'Q': stoppable = FALSE;
+		    case 'Q': stoppable = 0;
 			      break;
-		    case 'I': sub_init_lf = TRUE;
+		    case 'I': sub_init_lf = 1;
 		    case 'i': if (argc > 2) {
 		    		sub_init_str = argv[2];
 				argc--;
@@ -248,7 +426,8 @@ char **argv,**envp;
 	exit(1);
 }
 
-writehelp()
+static void
+writehelp(void)
 {
 	FILE *help;
 	int c;
@@ -262,13 +441,14 @@ writehelp()
 	fclose(help);
 }
 
-initialize()
+static void
+initialize(void)
 {
 #ifdef WELCOM
 	FILE *f;
 #endif
-	int p,ch,l;
-	char *s,*term,*termcap,**envp,**envq;
+	int p, ch, l;
+	char *s, *term, *termcap, **envp, **envq;
 
 	if (is_shell) {
 #ifdef WELCOM
@@ -289,14 +469,14 @@ initialize()
 	l = 0;
 	envp = nenvp;
 	while (*envp++) l++;
-	if (term = getenv("WTERM")) {
+	if ((term = getenv("WTERM"))) {
 	    l++;
 	    s = (char *) calloc(strlen(term)+6,sizeof(char));
 	    strcpy(s,"TERM=");
 	    strcat(s,term);
 	    term = s;
 	}
-	if (termcap = getenv("WTERMCAP")) {
+	if ((termcap = getenv("WTERMCAP"))) {
 	    l++;
 	    s = (char *) calloc(strlen(termcap)+9,sizeof(char));
 	    strcpy(s,"TERMCAP=");
@@ -315,9 +495,9 @@ initialize()
 		else *envq++ = *envp++;
 	    }
 	    *envq = (char *)0;
-	    new_envp = TRUE;
+	    new_envp = 1;
 	}
-	else new_envp = FALSE;
+	else new_envp = 0;
 
 	gettty();
 	fixtty();
@@ -332,21 +512,54 @@ initialize()
 	current_process_number = 0;
 	current_process = prolist[0];
 
-	(void) signal(SIGCHLD, finish);
+	/* Use sigaction instead of signal */
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = finish;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+	sigaction(SIGCHLD, &sa, NULL);
 }
 
-gettty()
+static void
+gettty(void)
 {
+#ifndef HAVE_TERMIOS
 	ioctl(0, TIOCGETP, (char *)&(ttychar.tty_b));
 	ioctl(0, TIOCGETC, (char *)&(ttychar.tty_tc));
 	ioctl(0, TIOCGETD, (char *)&(ttychar.tty_l));
 	ioctl(0, TIOCGLTC, (char *)&(ttychar.tty_lc));
 	ioctl(0, TIOCLGET, (char *)&(ttychar.tty_lb));
 	stopch = ttychar.tty_lc.t_suspc;
+#else
+	/* Use termios for modern systems */
+	struct termios tio;
+	tcgetattr(0, &tio);
+	/* Convert termios to sgttyb for compatibility */
+	ttychar.tty_b.sg_ispeed = cfgetispeed(&tio);
+	ttychar.tty_b.sg_ospeed = cfgetospeed(&tio);
+	ttychar.tty_b.sg_erase = tio.c_cc[VERASE];
+	ttychar.tty_b.sg_kill = tio.c_cc[VKILL];
+	ttychar.tty_b.sg_flags = 0;
+	if (tio.c_lflag & ICANON) ttychar.tty_b.sg_flags &= ~RAW;
+	else ttychar.tty_b.sg_flags |= RAW;
+	if (tio.c_lflag & ECHO) ttychar.tty_b.sg_flags |= ECHO;
+
+	ttychar.tty_tc.t_intrc = tio.c_cc[VINTR];
+	ttychar.tty_tc.t_quitc = tio.c_cc[VQUIT];
+	ttychar.tty_tc.t_startc = tio.c_cc[VSTART];
+	ttychar.tty_tc.t_stopc = tio.c_cc[VSTOP];
+	ttychar.tty_tc.t_eofc = tio.c_cc[VEOF];
+
+	ttychar.tty_lc.t_suspc = tio.c_cc[VSUSP];
+	stopch = ttychar.tty_lc.t_suspc;
+#endif
 }
 
-fixtty()
+static void
+fixtty(void)
 {
+#ifndef HAVE_TERMIOS
 	struct sgttyb sbuf;
 #ifdef NOFLOWCTL
 	struct tchars tbuf;
@@ -364,14 +577,31 @@ fixtty()
 	sbuf.sg_flags &= ~TANDEM;
 #endif
 	ioctl(0, TIOCSETP, (char *)&sbuf);
+#else
+	/* Use termios for modern systems */
+	struct termios tio;
+	tcgetattr(0, &tio);
+
+	/* Set raw mode */
+	tio.c_lflag &= ~(ICANON | ECHO | ECHOE | ECHOK | ECHONL | ISIG | IEXTEN);
+	tio.c_iflag &= ~(ICRNL | INLCR | IGNCR | IXON | IXOFF);
+	tio.c_oflag &= ~OPOST;
+	tio.c_cc[VMIN] = 1;
+	tio.c_cc[VTIME] = 0;
+
+	tcsetattr(0, TCSANOW, &tio);
+#endif
 }
 
-static dumpchar(c)
+static int
+dumpchar(int c)
 {
 	putchar(c);
+	return 0;
 }
 
-initwin()
+static void
+initwin(void)
 {
 	int i;
 
@@ -388,25 +618,26 @@ initwin()
 	mouseY = ScreenLength / 2;
 
 	for (i = 1; i<MAX_WINDOWS; i++) winlist[i] = NULL;
-	winlist[0] = wmmake(ScreenLength,ScreenWidth,0,0,0,FALSE);
+	winlist[0] = wmmake(ScreenLength,ScreenWidth,0,0,0,0);
 	if (statusmode) {
 	    statuswin = wmmake(ScreenLength/4,
 				ScreenWidth/2,
 				1,
 				ScreenWidth-ScreenWidth/2-1,
 				3,
-				FALSE);
-	    wmheadstr(statuswin,"WM Status Window",FALSE);
+				0);
+	    wmheadstr(statuswin,"WM Status Window",0);
 	    statuswin->flags |= WM_SCROLL;
 	}
 	else statuswin = NULL;
-	dumpmode = FALSE;
+	dumpmode = 0;
 }
 
-initfnkey()
+static void
+initfnkey(void)
 {
-	int f,flg;
-	char *p,ch;
+	int f, flg;
+	char *p, ch;
 
 	fn_key_buf_pointer = fn_key_buf;
 
@@ -434,39 +665,51 @@ initfnkey()
 	fn_table[10+4].fn_def = KHstr;
 	fn_table[10+4].fn_tra[1] = 'H';
 
-	flg = FALSE;
+	flg = 0;
 	for (f = 0; f < 10+4+1; f++) {
-	    if (ch = *fn_table[f].fn_def) {
-		if (!flg) { fn_key_char = ch; flg = TRUE; }
+	    if ((ch = *fn_table[f].fn_def)) {
+		if (!flg) { fn_key_char = ch; flg = 1; }
 		else if (ch != fn_key_char) fn_key_char = 0;
 	    }
 	}
 	if (!flg) fn_key_char = 0;
 }
 
-startprocess(p,w)
-int p,w;
+static void
+startprocess(int p, int w)
 {
 	struct pro_str *proc;
-	char line[11];
+	int master, slave, child;
+#ifdef USE_BSD_PTY
+	char line[PATH_MAX];
 	char c;
-	int i,master,slave,child;
+	int i;
 	struct stat stb;
+#else
+	char slave_name[PATH_MAX];
+#endif
+#ifndef HAVE_TERMIOS
 	struct tchars tbuf;
+#else
+	struct termios tio;
+#endif
 
 	if (p < 0 || p >= MAX_PROCESSES || prolist[p]) return;
 	if (w < 0 || w >= MAX_WINDOWS || winlist[w] == NULL) return;
 	prolist[p] = proc =
 		(struct pro_str *) calloc(1, sizeof(struct pro_str));
 
-	strcpy(line,"/dev/ptyXX");
+#ifdef USE_BSD_PTY
+	/* BSD-style PTY allocation */
+	strncpy(line,"/dev/ptyXX", sizeof(line)-1);
+	line[sizeof(line)-1] = '\0';
 	for(c = 'p'; c <= 's'; c++) {
 	    line[strlen("/dev/pty")] = c;
 	    line[strlen("/dev/ptyp")] = '0';
 	    if (stat(line, &stb) < 0) break;
 	    for (i = 15; i >= 0; i--) {
 		line[strlen("/dev/ptyp")] = "0123456789abcdef"[i];
-		master = open(line, 2);
+		master = open(line, O_RDWR);
 		if (master >= 0) break;
 	    }
 	    if (master >= 0) break;
@@ -475,23 +718,41 @@ int p,w;
 	    free((char *)proc);
 	    prolist[p] = NULL;
 	    if (statusmode) {
-		wmaddstr(statuswin,"Out of pty's\r\n",FALSE);
+		wmaddstr(statuswin,"Out of pty's\r\n",0);
 		dorefresh();
 	    }
 	    return;
 	}
 	proc->pro_master = master;
 	line[strlen("/dev/")] = 't';
-	proc->pro_slave = slave = open(line,2);
+	proc->pro_slave = slave = open(line, O_RDWR);
 	if (slave < 0) {
+	    close(master);
 	    free((char *)proc);
 	    prolist[p] = NULL;
 	    if (statusmode) {
-		wmaddstr(statuswin,"Can't open slave\r\n",FALSE);
+		wmaddstr(statuswin,"Can't open slave\r\n",0);
 		dorefresh();
 	    }
 	    return;
 	}
+#else
+	/* POSIX openpty() */
+	if (openpty(&master, &slave, slave_name, NULL, NULL) < 0) {
+	    perror("openpty");
+	    free((char *)proc);
+	    prolist[p] = NULL;
+	    if (statusmode) {
+		wmaddstr(statuswin,"Out of pty's\r\n",0);
+		dorefresh();
+	    }
+	    return;
+	}
+	proc->pro_master = master;
+	proc->pro_slave = slave;
+#endif
+
+#ifndef HAVE_TERMIOS
 	ioctl(slave, TIOCSETP, (char *)&(ttychar.tty_b));
 	tbuf = ttychar.tty_tc;
 #ifdef NOFLOWCTL
@@ -502,22 +763,40 @@ int p,w;
 	ioctl(slave, TIOCSLTC, (char *)&(ttychar.tty_lc));
 	ioctl(slave, TIOCLSET, (char *)&(ttychar.tty_lb));
 	ioctl(slave, TIOCSETD, (char *)&(ttychar.tty_l));
+#else
+	/* Setup termios for slave */
+	tcgetattr(slave, &tio);
+	tio.c_cc[VINTR] = ttychar.tty_tc.t_intrc;
+	tio.c_cc[VQUIT] = ttychar.tty_tc.t_quitc;
+	tio.c_cc[VSTART] = ttychar.tty_tc.t_startc;
+	tio.c_cc[VSTOP] = ttychar.tty_tc.t_stopc;
+	tio.c_cc[VEOF] = ttychar.tty_tc.t_eofc;
+	tio.c_cc[VSUSP] = ttychar.tty_lc.t_suspc;
+	tcsetattr(slave, TCSANOW, &tio);
+#endif
 
 	proc->pro_id = child = fork();
 	if (child < 0) {
+	    close(master);
+	    close(slave);
 	    free((char *)proc);
 	    prolist[p] = NULL;
 	    if (statusmode) {
-		wmaddstr(statuswin,"Can't get process\r\n",FALSE);
+		wmaddstr(statuswin,"Can't get process\r\n",0);
 		dorefresh();
 	    }
 	    return;
 	}
 	if (child == 0) {
 	    int t;
-	    t = open("/dev/tty",2);
+	    t = open("/dev/tty",O_RDWR);
 	    if (t >= 0) {
+#ifndef HAVE_TERMIOS
 		ioctl(t, TIOCNOTTY, (char *)0);
+#else
+		/* Modern way to detach from controlling terminal */
+		setsid();
+#endif
 		close(t);
 	    }
 	    close(master);
@@ -529,7 +808,7 @@ int p,w;
 	    sub_argv[0] = shell;
 	    execve(shell,sub_argv,nenvp);
 	    printf("Can't run %s\r\n",shell);
-	    execle("/bin/sh","sh","-i",0,nenvp);
+	    execle("/bin/sh","sh","-i",(char *)0,nenvp);
 	    printf("Can't run sh either\r\n");
 	    exit(1);
 	}
@@ -538,8 +817,8 @@ int p,w;
 	proc->pro_cur_win = winlist[w];
 	proc->pro_ibuf_pointer = proc->pro_ibuf;
 	proc->pro_ibuf_counter = 0;
-	proc->change_sg_flags = FALSE;
-	proc->change_to_cooked = FALSE;
+	proc->change_sg_flags = 0;
+	proc->change_to_cooked = 0;
 	proc->sg_flags = ttychar.tty_b.sg_flags;
 	proc->pro_sts = 0;
 	proc->pro_do = doaddch;
@@ -549,39 +828,53 @@ int p,w;
 	}
 	else if (!new_envp && is_cshell)
 	    sendstringtoprocess(proc,"setenv TERM $wterm\n");
-	new_mask = TRUE;
+	new_mask = 1;
 	if (statusmode) {
-	    wmaddstr(statuswin,"Start process ",FALSE);
-	    wmaddnum(statuswin,"%d",p,FALSE);
-	    wmaddstr(statuswin," in window ",FALSE);
-	    wmaddnum(statuswin,"%d\r\n",w,TRUE);
+	    wmaddstr(statuswin,"Start process ",0);
+	    wmaddnum(statuswin,"%d",p,0);
+	    wmaddstr(statuswin," in window ",0);
+	    wmaddnum(statuswin,"%d\r\n",w,1);
 	}
 }
 
-finish()
+static void
+finish(int sig)
 {
-	union wait status;
-	int pid,p;
+	int status;
+	int pid, p;
 
-	(void) signal(SIGCHLD, SIG_IGN);
-	pid = wait3(&status, WNOHANG | WUNTRACED, 0);
+	/* Re-establish handler using sigaction */
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = SIG_IGN;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGCHLD, &sa, NULL);
+
+	pid = waitpid(-1, &status, WNOHANG | WUNTRACED);
 	for (p = 0; p < MAX_PROCESSES; p++) {
-	    if (prolist[p]->pro_id == pid) break;
+	    if (prolist[p] && prolist[p]->pro_id == pid) break;
 	}
 	if (p >= MAX_PROCESSES) {
-	    if (statusmode)
-		wmaddstr(statuswin,"Strange Signal Received\r\n",FALSE);
+	    if (statusmode) {
+		wmaddstr(statuswin,"Strange Signal Received\r\n",0);
 		dorefresh();
+	    }
 	}
 	else if (WIFEXITED(status)) killedprocess(p);
 	else if (WIFSTOPPED(status)) {
 		prolist[p]->pro_sts = 1;
 	}
-	(void) signal(SIGCHLD, finish);
+
+	/* Re-establish handler */
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = finish;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+	sigaction(SIGCHLD, &sa, NULL);
 }
 
-killedprocess(p)
-int p;
+static void
+killedprocess(int p)
 {
 	int kp;
 	struct pro_str *proc;
@@ -601,20 +894,25 @@ int p;
 	    current_process = prolist[p];
 	}
 	if (statusmode) {
-	    wmaddstr(statuswin,"Process ",FALSE);
-	    wmaddnum(statuswin,"%d",kp,FALSE);
-	    wmaddstr(statuswin," killed\r\n",FALSE);
+	    wmaddstr(statuswin,"Process ",0);
+	    wmaddnum(statuswin,"%d",kp,0);
+	    wmaddstr(statuswin," killed\r\n",0);
 	    dorefresh();
 	}
-	new_mask = TRUE;
+	new_mask = 1;
 }
 
-done()
+void
+done(void)
 {
-	union wait status;
-	int p,i;
+	int p;
+	struct sigaction sa;
 
-	(void) signal(SIGCHLD, SIG_IGN);
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = SIG_IGN;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGCHLD, &sa, NULL);
+
 	for (p = 0; p < MAX_PROCESSES; p++)
 	    if (prolist[p]) {
 		kill(prolist[p]->pro_id,SIGKILL);
@@ -623,53 +921,75 @@ done()
 	if (KEstr) tputs(KEstr,0,dumpchar);
 	wmend();
 	fflush(stdout);
+#ifndef HAVE_TERMIOS
 #ifdef NOFLOWCTL
 	ioctl(0, TIOCSETC, &(ttychar.tty_tc));
 #endif
 	ioctl(0, TIOCSETP, (char *)&(ttychar.tty_b));
+#else
+	/* Restore original terminal settings */
+	struct termios tio;
+	tcgetattr(0, &tio);
+	tio.c_lflag |= ICANON | ECHO;
+	tio.c_iflag |= ICRNL;
+	tio.c_oflag |= OPOST;
+	tcsetattr(0, TCSANOW, &tio);
+#endif
 	if (is_shell) printf("\nWindow Manager end\n");
 	else printf("\n%s end\n",shell);
-	(void) signal(SIGCHLD, SIG_IGN);
+
+	sigaction(SIGCHLD, &sa, NULL);
 	exit(0);
 }
 
-stopprocess(p)
+static void
+stopprocess(int p)
 {
 	if (p < 0 || p >= MAX_PROCESSES || prolist[p] == NULL) return;
 	if (prolist[p]->pro_sts == 0) kill(prolist[p]->pro_id,SIGSTOP);
 }
 
-process()
+static void
+process(void)
 {
-	int nfound,maxfd,readfds,writefds,execptfds;
-	int p,bp[MAX_PROCESSES],master,stop;
-	int pn[MAX_PROCESSES+1],q;
+	fd_set readfds_set, writefds_set, exceptfds_set;
+	int nfound, maxfd;
+	int p, bp[MAX_PROCESSES], master, stop;
+	int pn[MAX_PROCESSES+1], q;
 	struct pro_str *proc;
 	struct timeval timeout;
+#ifndef HAVE_TERMIOS
 	struct sgttyb sb;
+#else
+	struct termios tio;
+#endif
 
 	input_freq = INPUT_FREQ;
-	new_mask = TRUE;
+	new_mask = 1;
 	for(;;) {
-	    maxfd = readfds = writefds = execptfds = 0;
-	    stop = FALSE;
+	    FD_ZERO(&readfds_set);
+	    FD_ZERO(&writefds_set);
+	    FD_ZERO(&exceptfds_set);
+	    maxfd = 0;
+	    stop = 0;
 	    if (new_mask) {
 		q = 0;
 		for (p = 0; p < MAX_PROCESSES; p++)
 		    if (prolist[p]) pn[q++] = p;
 		pn[q] = -1;
-		new_mask = FALSE;
+		new_mask = 0;
 	    }
 	    for (q = 0; pn[q] >= 0; q++) {
 		p = pn[q];
 		if ((proc = prolist[p]) == NULL) continue;
 		master = proc->pro_master;
 		if (master > maxfd) maxfd = master;
-		readfds |= bp[p] = 1<<(proc->pro_master);
-		if (proc->pro_ibuf_counter != 0) writefds |= bp[p];
+		FD_SET(master, &readfds_set);
+		bp[p] = master;
+		if (proc->pro_ibuf_counter != 0) FD_SET(master, &writefds_set);
 		stop = stop || proc->change_sg_flags;
 	    }
-	    readfds |= 1<<0;
+	    FD_SET(0, &readfds_set);
 	    if (stop) {
 		timeout.tv_sec = 0;
 	        timeout.tv_usec = 1;
@@ -683,22 +1003,37 @@ process()
 		wmrefresh0(mouseY,mouseX);
 	    }
 	    else if (!dumpmode) dorefresh();
-	    nfound = select(maxfd+1,&readfds,&writefds,&execptfds,&timeout);
-	    if (readfds & (1<<0)) processinput();
+	    nfound = select(maxfd+1, &readfds_set, &writefds_set, &exceptfds_set, &timeout);
+	    if (FD_ISSET(0, &readfds_set)) processinput();
 	    for (p = 0; p < MAX_PROCESSES; p++) {
 		if ((proc = prolist[p]) == NULL) continue;
 		master = proc->pro_master;
-		if (readfds & bp[p]) processoutput(p);
+		if (FD_ISSET(master, &readfds_set)) processoutput(p);
 		else if (proc->change_sg_flags && proc->pro_sts == 1) {
+#ifndef HAVE_TERMIOS
 		    sb = ttychar.tty_b;
 		    sb.sg_flags = proc->sg_flags;
 		    ioctl(proc->pro_slave,TIOCSETP,&sb);
+#else
+		    tcgetattr(proc->pro_slave, &tio);
+		    if (proc->sg_flags & RAW) {
+			tio.c_lflag &= ~ICANON;
+		    } else {
+			tio.c_lflag |= ICANON;
+		    }
+		    if (proc->sg_flags & ECHO) {
+			tio.c_lflag |= ECHO;
+		    } else {
+			tio.c_lflag &= ~ECHO;
+		    }
+		    tcsetattr(proc->pro_slave, TCSANOW, &tio);
+#endif
 		    kill(proc->pro_id,SIGCONT);
 		    proc->pro_sts = 0;
-		    proc->change_sg_flags = FALSE;
-		    proc->change_to_cooked = FALSE;
+		    proc->change_sg_flags = 0;
+		    proc->change_to_cooked = 0;
 		}
-		if (writefds & bp[p]) {
+		if (FD_ISSET(master, &writefds_set)) {
 		    write(master,proc->pro_ibuf,proc->pro_ibuf_counter);
 		    proc->pro_ibuf_pointer = proc->pro_ibuf;
 		    proc->pro_ibuf_counter = 0;
@@ -707,13 +1042,13 @@ process()
 	}
 }
 
-processoutput(p)
-int p;
+static void
+processoutput(int p)
 {
-	int cc;
+	ssize_t cc;
 	char *cp;
 	struct pro_str *proc;
-	int nfound,readfds,writefds,execptfds;
+	fd_set readfds_set, writefds_set, exceptfds_set;
 	struct timeval timeout;
 
 	proc = prolist[p];
@@ -723,33 +1058,37 @@ int p;
 	    (proc->pro_do)(*cp++ & 0177,p,proc);
 	    if (--input_freq <= 0) {
 		input_freq = INPUT_FREQ;
-		readfds = 1<<0;
-		writefds = execptfds = 0;
+		FD_ZERO(&readfds_set);
+		FD_ZERO(&writefds_set);
+		FD_ZERO(&exceptfds_set);
+		FD_SET(0, &readfds_set);
 		timeout.tv_sec = 0;
 		timeout.tv_usec = 1;
-		nfound = select(0+1,&readfds,&writefds,&execptfds,&timeout);
-		if (readfds & (1<<0)) processinput();
+		select(1, &readfds_set, &writefds_set, &exceptfds_set, &timeout);
+		if (FD_ISSET(0, &readfds_set)) processinput();
 	    }
 	}
 }
 
-processinput()
+static void
+processinput(void)
 {
-	int cc,f,stop;
-	char *cp,*p,ch;
+	ssize_t cc;
+	int f, stop;
+	char *cp, *p, ch;
 	struct pro_str *proc;
 
 	input_freq = INPUT_FREQ;
 	proc = current_process;
 	if (!proc) proc = prolist[0];
 
-	stop = FALSE;
+	stop = 0;
 	cc = read(0,i_buf,sizeof(i_buf));
 	for(cp = i_buf; cp < i_buf+cc; cp++) {
 	    ch = *cp & 0177;
 	    if (ch == kill_character) done();
 	    if (stoppable && ch == stopch) {
-		stop = TRUE;
+		stop = 1;
 		continue;
 	    }
 	    if (mouse_input_number && '0' <= ch && ch <= '9') {
@@ -757,15 +1096,15 @@ processinput()
 		    mouse_input_window = mouse_input_window * 10 + (ch - '0');
 		else
 		    mouse_input_page = mouse_input_page * 10 + (ch - '0');
-		wmaddch(mousewin,ch,FALSE);
+		wmaddch(mousewin,ch,0);
 		continue;
 	    }
 	    if (mouse_input_number && (ch == '\n' || ch == '\r')) {
 		mouse_input_number = 2;
-		wmcupos(mousewin,1,4,FALSE);
+		wmcupos(mousewin,1,4,0);
 		continue;
 	    }
-	    fn_key_partial_match = FALSE;
+	    fn_key_partial_match = 0;
 	    *fn_key_buf_pointer++ = ch;
 	    if (fn_key_char == 0 || *fn_key_buf == fn_key_char) {
 		for(f = 0; f < 10+4+1; f++)
@@ -777,12 +1116,12 @@ processinput()
 		if (mousemode &&
 		    (f >= 10 ||
 		     (((mouse_flag>>f)&1) && mouse_table[f].mouse_msg))) {
-		    (*mouse_table[f].do_mouse)();
+		    (*mouse_table[f].do_mouse)(0,0,NULL);
 		    (*tt.t_topos)(mouseY+1,mouseX+1);
 		    fflush(stdout);
 		}
 		else if (mousemode && f == 0) domousehome();
-		else if (fn_table[f].fn_mode == 0) 
+		else if (fn_table[f].fn_mode == 0)
 		    sendstringtoprocess(proc,fn_table[f].fn_tra);
 		else if (fn_table[f].fn_mode == 1) {
 		    for (p = fn_table[f].fn_tra; *p;)
@@ -805,10 +1144,17 @@ processinput()
 	    if (KEstr) tputs(KEstr,0,dumpchar);
 	    wmend();
 	    fflush(stdout);
+#ifndef HAVE_TERMIOS
 #ifdef NOFLOWCTL
 	    ioctl(0, TIOCSETC, &(ttychar.tty_tc));
 #endif
 	    ioctl(0, TIOCSETP, (char *)&(ttychar.tty_b));
+#else
+	    struct termios tio;
+	    tcgetattr(0, &tio);
+	    tio.c_lflag |= ICANON | ECHO;
+	    tcsetattr(0, TCSANOW, &tio);
+#endif
 	    kill(0, SIGTSTP); /* stop itself */
 	    fixtty();
 	    wminit();
@@ -827,42 +1173,38 @@ processinput()
 	}
 }
 
-funkeycheck(fk)
-char *fk;
+static int
+funkeycheck(const char *fk)
 {
-	register char *p;
+	char *p;
 
-	if (!*fk) return FALSE;
+	if (!*fk) return 0;
 
 	for (p = fn_key_buf; p < fn_key_buf_pointer && *fk;)
-		if (*fk++ != *p++) return FALSE;
+		if (*fk++ != *p++) return 0;
 	if (*fk) {
-	    fn_key_partial_match = TRUE;
-	    return FALSE;
+	    fn_key_partial_match = 1;
+	    return 0;
 	}
-	return TRUE;
+	return 1;
 }
 
-sendtoprocess(proc,ch)
-struct pro_str *proc;
-char ch;
+static void
+sendtoprocess(struct pro_str *proc, char ch)
 {
 	if (proc->pro_ibuf_counter >= BUFSIZ) return;
 	*proc->pro_ibuf_pointer++ = ch;
 	proc->pro_ibuf_counter++;
 }
 
-sendstringtoprocess(proc,str)
-struct pro_str *proc;
-char *str;
+static void
+sendstringtoprocess(struct pro_str *proc, const char *str)
 {
 	while(*str) sendtoprocess(proc,*str++);
 }
 
-doaddch(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doaddch(char ch, int p, struct pro_str *proc)
 {
 	struct win_str *current;
 
@@ -877,32 +1219,34 @@ struct pro_str *proc;
 	    current = proc->pro_cur_win;
 	    if (!current) {
 		nowindow(p);
-		return;
+		return 0;
 	    }
 	    if (ch == '\n') {
-		if (proc->change_to_cooked) wmaddch(current,'\r',FALSE);
+		if (proc->change_to_cooked) wmaddch(current,'\r',0);
 		if (!dumpmode &&
 		    current->cur_x == current->max_x-1 &&
 		    (current->flags & DM_PAGE))
 			dorefresh();
-		wmaddch(current,'\n',FALSE);
+		wmaddch(current,'\n',0);
 		if (!dumpmode && (current->flags & DM_REFRESH)) dorefresh();
 	    }
-	    else wmaddch(current,ch,FALSE);
+	    else wmaddch(current,ch,0);
 	}
+	return 0;
 }
 
-nowindow(p)
-int p;
+static void
+nowindow(int p)
 {
 	if (statuswin) {
-	    wmaddstr(statuswin,"No window to process ",FALSE);
-	    wmaddnum(statuswin,"%d\r\n",p,FALSE);
+	    wmaddstr(statuswin,"No window to process ",0);
+	    wmaddnum(statuswin,"%d\r\n",p,0);
 	    dorefresh();
 	}
 }
 
-dorefresh()
+static void
+dorefresh(void)
 {
 	if (mousemode) wmrefresh0(mouseY,mouseX);
 	else if (current_process && current_process->pro_cur_win)
@@ -910,21 +1254,20 @@ dorefresh()
 	else wmrefresh(winlist[0]);
 }
 
-doesc(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doesc(char ch, int p, struct pro_str *proc)
 {
 	proc->pro_stk_top = 0;
 	dopushzero(ch,p,proc);
 	if ((*vi200table[ch])(ch,p,proc)) proc->pro_do = doaddch;
+	return 0;
 }
 
-dopushzero(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dopushzero(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	if (proc->pro_stk_top >= STK_LEN) {
 	    fin(ch,p,proc);
 	    return END;
@@ -936,107 +1279,103 @@ struct pro_str *proc;
 	}
 }
 
-dodigit(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dodigit(char ch, int p, struct pro_str *proc)
 {
+	(void)p;
 	proc->pro_stk_flg[proc->pro_stk_top] |= STK_SET;
 	proc->pro_stk[proc->pro_stk_top] =
 	    proc->pro_stk[proc->pro_stk_top]*10+(ch-'0');
 	return CONT;
 }
 
-dosetplus(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetplus(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_stk_flg[proc->pro_stk_top] |= STK_PLUS;
 	return CONT;
 }
 
-dosetminus(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetminus(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_stk_flg[proc->pro_stk_top] |= STK_MINUS;
 	return CONT;
 }
 
-doseton(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doseton(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_stk_flg[proc->pro_stk_top] |= STK_ON;
 	return CONT;
 }
 
-dosetoff(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetoff(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_stk_flg[proc->pro_stk_top] |= STK_OFF;
 	return CONT;
 }
 
-fin(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+fin(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
 	if (statusmode) {
-	    wmaddstr(statuswin,"Illegal esc seq from process ",FALSE);
-	    wmaddnum(statuswin,"%d\r\n",p,FALSE);
+	    wmaddstr(statuswin,"Illegal esc seq from process ",0);
+	    wmaddnum(statuswin,"%d\r\n",p,0);
 	    dorefresh();
 	}
 	proc->pro_do = doaddch;
 	return END;
 }
 
-doansiesc(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doansiesc(char ch, int p, struct pro_str *proc)
 {
 	if ((*ansitable[ch])(ch,p,proc)) proc->pro_do = doaddch;
+	return 0;
 }
 
-doansi(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doansi(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = doansiesc;
 	return CONT;
 }
 
-docursor(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+docursor(char ch, int p, struct pro_str *proc)
 {
-	int x,y;
+	int x, y;
 	struct win_str *current;
 
+	(void)ch;
+	(void)p;
 	current = proc->pro_cur_win;
-	if (proc->pro_stk_top < 2) wmcupos(current,0,0,FALSE);
+	if (proc->pro_stk_top < 2) wmcupos(current,0,0,0);
 	else {
 		y = evalarg(proc,1,1,current->cur_y+1,1,current->max_y);
 		x = evalarg(proc,2,1,current->cur_x+1,1,current->max_x);
-		wmcupos(current,y-1,x-1,FALSE);
+		wmcupos(current,y-1,x-1,0);
 	}
 	return END;
 }
 
-evalarg(proc,n,d,p,min,max)
-struct pro_str *proc;
-int n,d,p,min,max;
+static int
+evalarg(struct pro_str *proc, int n, int d, int p, int min, int max)
 {
-	int flg,x;
+	int flg, x;
 
 	if (n > proc->pro_stk_top) return d;
 	flg = proc->pro_stk_flg[n];
@@ -1051,190 +1390,196 @@ int n,d,p,min,max;
 	return x;
 }
 
-docursorv2(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+docursorv2(char ch, int p, struct pro_str *proc)
 {
-	if (ch < ' ') fin();
-	wmcupos(proc->pro_cur_win,proc->pro_stk[1],ch-' ',FALSE);
+	(void)p;
+	if (ch < ' ') {
+		fin(ch,p,proc);
+		return 0;
+	}
+	wmcupos(proc->pro_cur_win,proc->pro_stk[1],ch-' ',0);
 	proc->pro_do = doaddch;
+	return 0;
 }
 
-docursorv1(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+docursorv1(char ch, int p, struct pro_str *proc)
 {
 	proc->pro_do = docursorv2;
-	if (ch < ' ') fin();
+	if (ch < ' ') {
+		fin(ch,p,proc);
+		return 0;
+	}
 	else proc->pro_stk[1] = ch-' ';
+	return 0;
 }
 
-docursorv(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+docursorv(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = docursorv1;
 	return CONT;
 }
 
-doeeol(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doeeol(char ch, int p, struct pro_str *proc)
 {
-	wmcleol(proc->pro_cur_win,FALSE);
+	(void)ch;
+	(void)p;
+	wmcleol(proc->pro_cur_win,0);
 	return END;
 }
 
-doeeos(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doeeos(char ch, int p, struct pro_str *proc)
 {
 	int arg = proc->pro_stk[1];
 
+	(void)ch;
+	(void)p;
 	switch (arg) {
 		case 3: wmclp(proc->pro_cur_win);
-		case 0: wmcleos(proc->pro_cur_win,FALSE);
+		case 0: wmcleos(proc->pro_cur_win,0);
 			break;
 		case 4: wmscroll(proc->pro_cur_win,
 			    proc->pro_cur_win->pre_line->line_stack_length,
-			    FALSE);
+			    0);
 			wmclp(proc->pro_cur_win);
-		case 2: wmcls(proc->pro_cur_win,FALSE);
+		case 2: wmcls(proc->pro_cur_win,0);
 		default: break;
 	}
 	return END;
 }
 
-doeeosv(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doeeosv(char ch, int p, struct pro_str *proc)
 {
-	wmcleos(proc->pro_cur_win,FALSE);
+	(void)ch;
+	(void)p;
+	wmcleos(proc->pro_cur_win,0);
 	return END;
 }
 
-doup(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doup(char ch, int p, struct pro_str *proc)
 {
-	wmvect(proc->pro_cur_win,-1,0,FALSE);
+	(void)ch;
+	(void)p;
+	wmvect(proc->pro_cur_win,-1,0,0);
 	return END;
 }
 
-dodown(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dodown(char ch, int p, struct pro_str *proc)
 {
-	wmvect(proc->pro_cur_win,1,0,FALSE);
+	(void)ch;
+	(void)p;
+	wmvect(proc->pro_cur_win,1,0,0);
 	return END;
 }
 
-doright(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doright(char ch, int p, struct pro_str *proc)
 {
-	wmvect(proc->pro_cur_win,0,1,FALSE);
+	(void)ch;
+	(void)p;
+	wmvect(proc->pro_cur_win,0,1,0);
 	return END;
 }
 
-doleft(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doleft(char ch, int p, struct pro_str *proc)
 {
-	wmvect(proc->pro_cur_win,0,-1,FALSE);
+	(void)ch;
+	(void)p;
+	wmvect(proc->pro_cur_win,0,-1,0);
 	return END;
 }
 
-dohome(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dohome(char ch, int p, struct pro_str *proc)
 {
-	wmcupos(proc->pro_cur_win,0,0,FALSE);
+	(void)ch;
+	(void)p;
+	wmcupos(proc->pro_cur_win,0,0,0);
 	return END;
 }
 
-docld(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+docld(char ch, int p, struct pro_str *proc)
 {
-	wmcls(proc->pro_cur_win,FALSE);
+	(void)ch;
+	(void)p;
+	wmcls(proc->pro_cur_win,0);
 	return END;
 }
 
-dolinsert(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dolinsert(char ch, int p, struct pro_str *proc)
 {
-	wminsline(proc->pro_cur_win,proc->pro_cur_win->cur_y,FALSE);
+	(void)ch;
+	(void)p;
+	wminsline(proc->pro_cur_win,proc->pro_cur_win->cur_y,0);
 	return END;
 }
 
-doldelete(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doldelete(char ch, int p, struct pro_str *proc)
 {
-	wmdelline(proc->pro_cur_win,proc->pro_cur_win->cur_y,FALSE);
+	(void)ch;
+	(void)p;
+	wmdelline(proc->pro_cur_win,proc->pro_cur_win->cur_y,0);
 	return END;
 }
 
-dosetins(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetins(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_cur_win->flags |= WM_INSERT;
 	return END;
 }
 
-doresetins(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doresetins(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_cur_win->flags &= ~WM_INSERT;
 	return END;
 }
 
-dodelchar(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dodelchar(char ch, int p, struct pro_str *proc)
 {
-	wmdelchar(proc->pro_cur_win,1,FALSE);
+	(void)ch;
+	(void)p;
+	wmdelchar(proc->pro_cur_win,1,0);
 	return END;
 }
 
-dodelchars(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dodelchars(char ch, int p, struct pro_str *proc)
 {
 	int cc;
 
+	(void)ch;
+	(void)p;
 	cc = evalarg(proc,1,1,0,1,proc->pro_cur_win->max_x);
-	wmdelchar(proc->pro_cur_win,cc,FALSE);
+	wmdelchar(proc->pro_cur_win,cc,0);
 	return END;
 }
 
-doredraw(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doredraw(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
+	(void)proc;
 	if (mousemode) wmredraw0(mouseY,mouseX);
 	else if (current_process && current_process->pro_cur_win)
 		wmredraw(current_process->pro_cur_win);
@@ -1242,72 +1587,69 @@ struct pro_str *proc;
 	return END;
 }
 
-doreverselinefeed(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doreverselinefeed(char ch, int p, struct pro_str *proc)
 {
 	struct win_str *current;
 
+	(void)ch;
+	(void)p;
 	current = proc->pro_cur_win;
 	if (current->scroll_start < current->cur_y) {
 	    --current->cur_y;
 	}
 	else if (current->flags & WM_SCROLL) {
-	    wmscroll(current,-1,FALSE);
+	    wmscroll(current,-1,0);
 	    current->cur_y = current->scroll_start;
 	}
 	else if (current->flags & DM_PAGE) {
-	    wmscroll(current,current->scroll_start-current->max_y,FALSE);
+	    wmscroll(current,current->scroll_start-current->max_y,0);
 	    current->cur_y = current->max_y-1;
 	}
 	return END;
 }
 
-dosetscroll(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetscroll(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_cur_win->scroll_start = proc->pro_cur_win->cur_y;
 	return END;
 }
 
-dostandout(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dostandout(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	if (proc->pro_stk[1]) proc->pro_cur_win->flags |= WM_STANDOUT;
 	else proc->pro_cur_win->flags &= ~WM_STANDOUT;
 	return END;
 }
 
-dospecialesc(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dospecialesc(char ch, int p, struct pro_str *proc)
 {
 	if ((*specialtable[ch])(ch,p,proc)) proc->pro_do = doaddch;
+	return 0;
 }
 
-dospecial(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dospecial(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = dospecialesc;
 	return CONT;
 }
 
-dosetmode(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetmode(char ch, int p, struct pro_str *proc)
 {
-	int w,bw,flg,dfl;
-	struct win_str *win;
+	int w, bw, flg, dfl;
 
+	(void)ch;
 	if (proc->pro_stk_top < 2) {
 	    w = proc->pro_cur_win_num;
 	    flg = 1;
@@ -1325,86 +1667,84 @@ struct pro_str *proc;
 	return END;
 }
 
-dosetecho(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetecho(char ch, int p, struct pro_str *proc)
 {
     int old_sg_flags;
 
+	(void)ch;
 	old_sg_flags = proc->sg_flags;
 	if (proc->pro_stk[1] || (proc->pro_stk_flg[1] & (STK_PLUS | STK_ON)))
 		proc->sg_flags |= ECHO;
 	else proc->sg_flags &= ~ECHO;
 	if (old_sg_flags == proc->sg_flags) return END;
 	if (!proc->change_sg_flags) {
-	    proc->change_sg_flags = TRUE;
+	    proc->change_sg_flags = 1;
 	    stopprocess(p);
 	}
 	return END;
 }
 
-dosetraw(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetraw(char ch, int p, struct pro_str *proc)
 {
     int old_sg_flags;
 
+	(void)ch;
 	old_sg_flags = proc->sg_flags;
 	if (proc->pro_stk[1] || (proc->pro_stk_flg[1] & (STK_PLUS | STK_ON))) {
 	    proc->sg_flags |= RAW;
-	    proc->change_to_cooked = FALSE;
+	    proc->change_to_cooked = 0;
 	}
 	else {
-	    if (proc->sg_flags & RAW) proc->change_to_cooked = TRUE;
+	    if (proc->sg_flags & RAW) proc->change_to_cooked = 1;
 	    proc->sg_flags &= ~RAW;
 	}
 	if (proc->sg_flags == old_sg_flags) return END;
 	if (!proc->change_sg_flags) {
-	    proc->change_sg_flags = TRUE;
+	    proc->change_sg_flags = 1;
 	    stopprocess(p);
 	}
 	return END;
 }
 
-dosetdump(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetdump(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	if (proc->pro_stk[1] || (proc->pro_stk_flg[1] & (STK_PLUS | STK_ON)))
-		dumpmode = TRUE;
-	else dumpmode = FALSE;
+		dumpmode = 1;
+	else dumpmode = 0;
 	dorefresh();
 	return END;
 }
 
-dosetkill(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetkill(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	kill_character = evalarg(proc,1,0,kill_character,0,127);
 	return END;
 }
 
-dosetstop(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetstop(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	stopch = evalarg(proc,1,0,stopch,0,127);
 	return END;
 }
 
-dosetmouse(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetmouse(char ch, int p, struct pro_str *proc)
 {
 	int new_flag;
 
+	(void)ch;
+	(void)p;
 	new_flag = evalarg(proc,1,01777,mouse_flag,-INF,INF);
 	if (new_flag != mouse_flag) {
 	    if (!(new_flag & 1) && mousemode) {
@@ -1412,12 +1752,12 @@ struct pro_str *proc;
 		dorefresh();
 	    }
 	    mouse_flag = new_flag;
-	    if (mousemode) wmdel(mousewin,FALSE);
+	    if (mousemode) wmdel(mousewin,0);
 	    if (mousewin) wmfree(mousewin);
 	    mousewin = NULL;
 	    if (mousemode) {
 		createmouse();
-		wmputwin(mousewin,top_win,TRUE);
+		wmputwin(mousewin,top_win,1);
 		mouse_win_number = -1;
 		mouse_page_number = -1;
 		mouse_process_number = -1;
@@ -1426,11 +1766,10 @@ struct pro_str *proc;
 	return END;
 }
 
-dostring(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dostring(char ch, int p, struct pro_str *proc)
 {
+	(void)p;
 	if (proc->pro_mch == 0) {
 	    if (ch == '[') proc->pro_mch = ']';
 	    else if (ch == '(') proc->pro_mch = ')';
@@ -1451,32 +1790,32 @@ struct pro_str *proc;
 	return CONT;
 }
 
-docopys(p,proc)
-int p;
-struct pro_str *proc;
+static int
+docopys(int p, struct pro_str *proc)
 {
-	char *copy_mode;
+	const char *copy_mode;
 	FILE *copy_file;
 
+	(void)p;
 	if (proc->pro_stk[1] || (proc->pro_stk_flg[1] & (STK_PLUS | STK_ON)))
 		copy_mode = "w";
 	else copy_mode = "a";
 	copy_file = fopen(proc->pro_sbuf,copy_mode);
 	if (copy_file) {
-		if ((long) ftell(copy_file)) {
+		if (ftell(copy_file)) {
 			fputc(12,copy_file);
 		}
-		wmcopy(copy_file,TRUE);
+		wmcopy(copy_file,1);
 		fclose(copy_file);
 	}
 	return END;
 }
 
-docopy(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+docopy(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = dostring;
 	proc->pro_sdo = docopys;
 	proc->pro_sbuf_pointer = proc->pro_sbuf;
@@ -1484,12 +1823,12 @@ struct pro_str *proc;
 	return CONT;
 }
 
-dosetfnkeys(p,proc)
-int p;
-struct pro_str *proc;
+static int
+dosetfnkeys(int p, struct pro_str *proc)
 {
-	int f,m;
+	int f, m;
 
+	(void)p;
 	f = evalarg(proc,1,0,0,0,10+4+1-1);
 	m = evalarg(proc,2,0,0,-INF,INF);
 	fn_table[f].fn_mode = m;
@@ -1500,11 +1839,11 @@ struct pro_str *proc;
 	return END;
 }
 
-dosetfnkey(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetfnkey(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = dostring;
 	proc->pro_sdo = dosetfnkeys;
 	proc->pro_sbuf_pointer = proc->pro_sbuf;
@@ -1512,9 +1851,8 @@ struct pro_str *proc;
 	return CONT;
 }
 
-dopsdins(p,proc)
-int p;
-struct pro_str *proc;
+static int
+dopsdins(int p, struct pro_str *proc)
 {
 	int pp;
 
@@ -1524,11 +1862,11 @@ struct pro_str *proc;
 	return END;
 }
 
-dopsdin(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dopsdin(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = dostring;
 	proc->pro_sdo = dopsdins;
 	proc->pro_sbuf_pointer = proc->pro_sbuf;
@@ -1536,13 +1874,12 @@ struct pro_str *proc;
 	return CONT;
 }
 
-dosetbase(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dosetbase(char ch, int p, struct pro_str *proc)
 {
-	int pn,wn;
+	int pn, wn;
 
+	(void)ch;
 	pn = evalarg(proc,1,p,p,0,MAX_PROCESSES-1);
 	wn = evalarg(proc,2,proc->pro_base_win_num,proc->pro_base_win_num,
 			0,MAX_WINDOWS-1);
@@ -1551,13 +1888,13 @@ struct pro_str *proc;
 	return END;
 }
 
-dogivekeyboard(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dogivekeyboard(char ch, int p, struct pro_str *proc)
 {
-	int pn,wn;
+	int pn;
 
+	(void)ch;
+	(void)proc;
 	if (current_process_number != p) return END;
 	pn = evalarg(proc,1,p,p,0,MAX_PROCESSES-1);
 	if (prolist[pn] == NULL) return END;
@@ -1566,26 +1903,24 @@ struct pro_str *proc;
 	return END;
 }
 
-dokillprocess(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dokillprocess(char ch, int p, struct pro_str *proc)
 {
 	int pn;
 
+	(void)ch;
 	pn = evalarg(proc,1,p,p,0,MAX_PROCESSES-1);
 	if (pn == 0 || prolist[pn] == NULL) return END;
 	kill(prolist[pn]->pro_id,SIGKILL);
 	return END;
 }
 
-dostartprocess(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dostartprocess(char ch, int p, struct pro_str *proc)
 {
-	int pn,w,bw;
+	int pn, w, bw;
 
+	(void)ch;
 	pn = evalarg(proc,1,p,p,0,MAX_PROCESSES-1);
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
@@ -1596,30 +1931,28 @@ struct pro_str *proc;
 	return END;
 }
 
-doprlesc(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doprlesc(char ch, int p, struct pro_str *proc)
 {
 	if ((*prltable[ch])(ch,p,proc)) proc->pro_do = doaddch;
+	return 0;
 }
 
-doprl(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doprl(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = doprlesc;
 	return CONT;
 }
 
-docreate(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+docreate(char ch, int p, struct pro_str *proc)
 {
-	int w,x1,x2,y1,y2,pages,bw;
+	int w, x1, x2, y1, y2, pages, bw;
 
+	(void)ch;
 	bw = proc->pro_base_win_num;
 	for(w = bw; w < MAX_WINDOWS; w++) if (winlist[w] == NULL) break;
 	if (w >= MAX_WINDOWS) w = bw;
@@ -1632,91 +1965,91 @@ struct pro_str *proc;
 	pages = evalarg(proc,6,0,0,0,INF);
 
 	if (winlist[w]) {
-	    wmdel(winlist[w],FALSE);
+	    wmdel(winlist[w],0);
 	    wmfree(winlist[w]);
 	}
 	proc->pro_cur_win = winlist[w] =
-		wmmake(y2-y1+1,x2-x1+1,y1,x1,pages,FALSE);
+		wmmake(y2-y1+1,x2-x1+1,y1,x1,pages,0);
 	proc->pro_cur_win_num = w;
 	if (statusmode) {
-	    wmaddstr(statuswin,"Process ",FALSE);
-	    wmaddnum(statuswin,"%d",p,FALSE);
-	    wmaddstr(statuswin," create ",FALSE);
+	    wmaddstr(statuswin,"Process ",0);
+	    wmaddnum(statuswin,"%d",p,0);
+	    wmaddstr(statuswin," create ",0);
 	    dowinfo(w);
 	}
 	return END;
 }
 
-dowinfo(w)
+static void
+dowinfo(int w)
 {
 	struct win_str *win;
 
 	if (!statusmode || w < 0 || w >= MAX_WINDOWS) return;
-	if (win = winlist[w]) {
-	    wmaddnum(statuswin,"window %d ",w,FALSE);
-	    wmaddnum(statuswin,"at (%d,",win->beg_x,FALSE);
-	    wmaddnum(statuswin,"%d) ",win->beg_y,FALSE);
-	    wmaddnum(statuswin,"c=%d ",win->max_x,FALSE);
-	    wmaddnum(statuswin,"l=%d\r\n",win->max_y,TRUE);
+	if ((win = winlist[w])) {
+	    wmaddnum(statuswin,"window %d ",w,0);
+	    wmaddnum(statuswin,"at (%d,",win->beg_x,0);
+	    wmaddnum(statuswin,"%d) ",win->beg_y,0);
+	    wmaddnum(statuswin,"c=%d ",win->max_x,0);
+	    wmaddnum(statuswin,"l=%d\r\n",win->max_y,1);
 	}
 }
 
-dodestroy(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dodestroy(char ch, int p, struct pro_str *proc)
 {
-	int w,bw;
+	int w, bw;
+	struct pro_str *proc2;
 
+	(void)ch;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
 
 	if (w == 0 || winlist[w] == NULL) return END;
-	wmdel(winlist[w],FALSE);
+	wmdel(winlist[w],0);
 	wmfree(winlist[w]);
 	winlist[w] = NULL;
 	if (statusmode) {
-	    wmaddnum(statuswin,"Process %d ",p,FALSE);
-	    wmaddstr(statuswin,"delete window ",FALSE);
-	    wmaddnum(statuswin,"%d\r\n",w,TRUE);
+	    wmaddnum(statuswin,"Process %d ",p,0);
+	    wmaddstr(statuswin,"delete window ",0);
+	    wmaddnum(statuswin,"%d\r\n",w,1);
 	}
 
 	for(p = 0; p < MAX_PROCESSES; p++) {
-	   proc = prolist[p];
-	   if (proc->pro_cur_win_num == w) {
-		if (winlist[proc->pro_base_win_num])
-			proc->pro_cur_win_num = proc->pro_base_win_num;
-		else proc->pro_cur_win_num = 0;
+	   proc2 = prolist[p];
+	   if (proc2 && proc2->pro_cur_win_num == w) {
+		if (winlist[proc2->pro_base_win_num])
+			proc2->pro_cur_win_num = proc2->pro_base_win_num;
+		else proc2->pro_cur_win_num = 0;
 		if (statusmode) {
-		    wmaddnum(statuswin,"Process %d",p,FALSE);
-		    wmaddstr(statuswin,"'s current window is forced to",FALSE);
-		    wmaddnum(statuswin," %d\r\n",proc->pro_cur_win_num,TRUE);
+		    wmaddnum(statuswin,"Process %d",p,0);
+		    wmaddstr(statuswin,"'s current window is forced to",0);
+		    wmaddnum(statuswin," %d\r\n",proc2->pro_cur_win_num,1);
 		}
-		proc->pro_cur_win = winlist[proc->pro_cur_win_num];
+		proc2->pro_cur_win = winlist[proc2->pro_cur_win_num];
 	    }
 	}
 	return END;
 }
 
-doenquire(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doenquire(char ch, int p, struct pro_str *proc)
 {
-	int bw,w,f;
+	int bw, w, f;
 	struct win_str *win;
 	char buf[100];
 
+	(void)ch;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
-	if (proc->pro_stk_top < 2) f = FALSE;
+	if (proc->pro_stk_top < 2) f = 0;
 	else f = evalarg(proc,2,1,0,-INF,INF);
 
-	if (win = winlist[w]) {
+	if ((win = winlist[w])) {
 	    if (f) {
-		sprintf(buf,"\033{%d;%d;%d;%d;%d;%d;%d;%d;%d;%de",
+		snprintf(buf, sizeof(buf),"\033{%d;%d;%d;%d;%d;%d;%d;%d;%d;%de",
 			w,
 			win->cur_x,
 			win->cur_y,
@@ -1729,7 +2062,7 @@ struct pro_str *proc;
 			win->max_line);
 	    }
 	    else {
-		sprintf(buf,"\033{%d;%d;%d;%d;%d;%d;%de",
+		snprintf(buf, sizeof(buf),"\033{%d;%d;%d;%d;%d;%d;%de",
 			w,
 			win->cur_x,
 			win->cur_y,
@@ -1749,13 +2082,13 @@ struct pro_str *proc;
 	return END;
 }
 
-doselect(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doselect(char ch, int p, struct pro_str *proc)
 {
-	int w,bw;
+	int w, bw;
 
+	(void)ch;
+	(void)p;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,0,w,0,MAX_WINDOWS-1-bw)+bw;
@@ -1767,14 +2100,14 @@ struct pro_str *proc;
 	return END;
 }
 
-dopopwindow(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dopopwindow(char ch, int p, struct pro_str *proc)
 {
-	int bw,w,w2;
-	struct win_str *win,*win2;
+	int bw, w, w2;
+	struct win_str *win, *win2;
 
+	(void)ch;
+	(void)p;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
@@ -1787,41 +2120,41 @@ struct pro_str *proc;
 	    if ((win2 = winlist[w2]) == NULL) return END;
 	}
 
-	wmrepos(win,win2,win->beg_y,win->beg_x,FALSE);
+	wmrepos(win,win2,win->beg_y,win->beg_x,0);
 
 	proc->pro_cur_win_num = w;
 	proc->pro_cur_win = win;
 	return END;
 }
 
-doreposwindow(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doreposwindow(char ch, int p, struct pro_str *proc)
 {
-	int w,bw,x,y;
+	int w, bw, x, y;
 	struct win_str *win;
 
+	(void)ch;
+	(void)p;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
 	if ((win = winlist[w]) == NULL) return END;
 	x = evalarg(proc,2,win->beg_x,win->beg_x,-INF,INF);
-	x = evalarg(proc,3,win->beg_y,win->beg_y,-INF,INF);
-	wmrepos(win,win->next_win,y,x,FALSE);
+	y = evalarg(proc,3,win->beg_y,win->beg_y,-INF,INF);
+	wmrepos(win,win->next_win,y,x,0);
 	proc->pro_cur_win_num = w;
 	proc->pro_cur_win = win;
 	return END;
 }
 
-dopageselect(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dopageselect(char ch, int p, struct pro_str *proc)
 {
-	int w,bw,l;
+	int w, bw, l;
 	struct win_str *wp;
 
+	(void)ch;
+	(void)p;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
@@ -1829,70 +2162,70 @@ struct pro_str *proc;
 	if (proc->pro_stk_top < 2) l = wp->next_line->line_stack_length;
 	else l = proc->pro_stk[2] * (wp->max_y - wp->scroll_start) -
 			wp->pre_line->line_stack_length;
-	wmscroll(wp,l,FALSE);
+	wmscroll(wp,l,0);
 	return END;
 }
 
-dopageforward(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dopageforward(char ch, int p, struct pro_str *proc)
 {
-	int w,bw,page;
+	int w, bw, page;
 	struct win_str *wp;
 
+	(void)ch;
+	(void)p;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
 	if ((wp = winlist[w]) == NULL) return END;
 	page = evalarg(proc,2,1,0,0,INF);
-	wmscroll(wp,page*(wp->max_y-wp->scroll_start),FALSE);
+	wmscroll(wp,page*(wp->max_y-wp->scroll_start),0);
 	return END;
 }
 
-dopagebackward(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+dopagebackward(char ch, int p, struct pro_str *proc)
 {
-	int w,bw,page;
+	int w, bw, page;
 	struct win_str *wp;
 
+	(void)ch;
+	(void)p;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
 	if ((wp = winlist[w]) == NULL) return END;
 	page = evalarg(proc,2,1,0,0,INF);
-	wmscroll(wp,-page*(wp->max_y-wp->scroll_start),FALSE);
+	wmscroll(wp,-page*(wp->max_y-wp->scroll_start),0);
 	return END;
 }
 
-doscroll(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doscroll(char ch, int p, struct pro_str *proc)
 {
-	int bw,w,n;
+	int bw, w, n;
 	struct win_str *win;
 
+	(void)ch;
+	(void)p;
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
 	if ((win = winlist[w]) == NULL) return END;
 	if (proc->pro_stk_top < 2) {
-	    wmscroll(win,win->next_line->line_stack_length,FALSE);
+	    wmscroll(win,win->next_line->line_stack_length,0);
 	}
 	else if (!(proc->pro_stk_flg[2] & STK_SET)) {
-	    wmscroll(win,-win->pre_line->line_stack_length,FALSE);
+	    wmscroll(win,-win->pre_line->line_stack_length,0);
 	}
 	else if (proc->pro_stk_top < 3) {
 	    n = evalarg(proc,2,0,0,-INF,INF);
-	    wmscroll(win,n,FALSE);
+	    wmscroll(win,n,0);
 	}
 	else {
 	    n = evalarg(proc,2,0,0,-win->pre_line->line_stack_length,
 	    			   win->next_line->line_stack_length);
-	    wmscroll(win,n,FALSE);
+	    wmscroll(win,n,0);
 	}
 
 	proc->pro_cur_win_num = w;
@@ -1900,25 +2233,24 @@ struct pro_str *proc;
 	return END;
 }
 
-doheadings(p,proc)
-int p;
-struct pro_str *proc;
+static int
+doheadings(int p, struct pro_str *proc)
 {
-	int w,bw;
+	int w, bw;
 
 	bw = proc->pro_base_win_num;
 	w = proc->pro_cur_win_num-bw;
 	w = evalarg(proc,1,w,w,0,MAX_WINDOWS-1-bw)+bw;
 	if (winlist[w] == NULL) return END;
-	wmheadstr(winlist[w],proc->pro_sbuf,FALSE);
+	wmheadstr(winlist[w],proc->pro_sbuf,0);
 	return END;
 }
 
-doheading(ch,p,proc)
-char ch;
-int p;
-struct pro_str *proc;
+static int
+doheading(char ch, int p, struct pro_str *proc)
 {
+	(void)ch;
+	(void)p;
 	proc->pro_do = dostring;
 	proc->pro_sdo = doheadings;
 	proc->pro_sbuf_pointer = proc->pro_sbuf;
@@ -1928,18 +2260,20 @@ struct pro_str *proc;
 
 /* mouse support routines */
 
-domouseend()
+static void
+domouseend(void)
 {
 	if (mousemode) {
-	    wmdel(mousewin,FALSE);
-	    wmdel(mousemark,FALSE);
-	    mousemark_set = FALSE;
+	    wmdel(mousewin,0);
+	    wmdel(mousemark,0);
+	    mousemark_set = 0;
 	    mouse_input_number = 0;
 	    mousemode = 0;
 	}
 }
 
-domouse()
+static void
+domouse(void)
 {
 	if (mousemode) { /* reset mouse mode */
 	    domouseend();
@@ -1957,18 +2291,19 @@ domouse()
 	mouse_increment = 1;
 
 	if (!mousewin) createmouse();
-	wmputwin(mousewin,top_win,TRUE);
+	wmputwin(mousewin,top_win,1);
 
 	if (!mousemark) {
 	    mousemark = wmcreate(1,1,0,0);
 	    mousemark->flags |= WM_STANDOUT;
-	    wmaddstr(mousemark,"*");
+	    wmaddstr(mousemark,"*",0);
 	}
 }
 
-createmouse()
+static void
+createmouse(void)
 {
-	int mwlen,f;
+	int mwlen, f;
 	char tbuf[16];
 
 	mwlen = 3;
@@ -1979,22 +2314,23 @@ createmouse()
 	mousewin = wmcreate(mwlen,10,1,0);
 	mousewin->beg_y = 1;
 	mousewin->beg_x = ScreenWidth-11;
-	wmcupos(mousewin,0,0,FALSE);
-	wmheadstr(mousewin,"Mouse Mode",FALSE);
-	wmaddstr(mousewin,"w = ",FALSE);
-	wmaddstr(mousewin,"\r\np = ",FALSE);
-	wmaddstr(mousewin,"\r\ncp= ",FALSE);
+	wmcupos(mousewin,0,0,0);
+	wmheadstr(mousewin,"Mouse Mode",0);
+	wmaddstr(mousewin,"w = ",0);
+	wmaddstr(mousewin,"\r\np = ",0);
+	wmaddstr(mousewin,"\r\ncp= ",0);
 	for (f = 0; f < 10; f++) {
 	    if ((mouse_flag>>f)&1 && mouse_table[f].mouse_msg && Kstr[f]) {
-		sprintf(tbuf,"\r\nF%d %s",f,mouse_table[f].mouse_msg);
-		wmaddstr(mousewin,tbuf,FALSE);
+		snprintf(tbuf,sizeof(tbuf),"\r\nF%d %s",f,mouse_table[f].mouse_msg);
+		wmaddstr(mousewin,tbuf,0);
 	    }
 	}
 }
 
-wmsetwnum() /* display current window number */
+static void
+wmsetwnum(void) /* display current window number */
 {
-	int w,cp,pl;
+	int w, cp, pl;
 	struct win_str *wp;
 
 	if (mousemode != 1) return;
@@ -2004,79 +2340,86 @@ wmsetwnum() /* display current window number */
 	    w = dosearchwin(wp);
 	    if (w < 0) w = -2;
 	    if (w != mouse_win_number) {
-		wmcupos(mousewin,0,4,FALSE);
-		if (w >= 0) wmaddnum(mousewin,"%d",w,FALSE);
-		else wmaddstr(mousewin,"????",FALSE);
-		wmcleol(mousewin,FALSE);
+		wmcupos(mousewin,0,4,0);
+		if (w >= 0) wmaddnum(mousewin,"%d",w,0);
+		else wmaddstr(mousewin,"????",0);
+		wmcleol(mousewin,0);
 	    }
 	    mouse_win_number = w;
 	    if (wp) {
 		pl = wp->max_y - wp->scroll_start;
 		cp = (wp->pre_line->line_stack_length + pl - 1)/pl;
 		if (cp != mouse_page_number) {
-	 	    wmcupos(mousewin,1,4,FALSE);
-		    wmaddnum(mousewin,"%d",cp,FALSE);
-		    wmcleol(mousewin,FALSE);
+	 	    wmcupos(mousewin,1,4,0);
+		    wmaddnum(mousewin,"%d",cp,0);
+		    wmcleol(mousewin,0);
 		    mouse_page_number = cp;
 		}
 	    }
 	    else if (mouse_page_number != -2) {
-	 	    wmcupos(mousewin,1,4,FALSE);
-		    wmaddstr(mousewin,"????",FALSE);
-		    wmcleol(mousewin,FALSE);
+	 	    wmcupos(mousewin,1,4,0);
+		    wmaddstr(mousewin,"????",0);
+		    wmcleol(mousewin,0);
 		    mouse_page_number = -2;
 	    }
 	}
 	if (current_process_number != mouse_process_number) {
-	    wmcupos(mousewin,2,4,FALSE);
-	    wmaddnum(mousewin,"%d",current_process_number,FALSE);
-	    wmcleol(mousewin,FALSE);
+	    wmcupos(mousewin,2,4,0);
+	    wmaddnum(mousewin,"%d",current_process_number,0);
+	    wmcleol(mousewin,0);
 	    mouse_process_number = current_process_number;
 	}
 }
 
-domousehome()
+static void
+domousehome(void)
 {
 	mouse_increment *= 4;
 }
 
-domouseup()
+static void
+domouseup(void)
 {
 	mouseY -= mouse_increment;
 	mouse_increment = 1;
 	if (mouseY < 0) mouseY = 0;
 }
 
-domousedown()
+static void
+domousedown(void)
 {
 	mouseY += mouse_increment;
 	mouse_increment = 1;
 	if (mouseY >= ScreenLength) mouseY = ScreenLength-1;
 }
 
-domouseright()
+static void
+domouseright(void)
 {
 	mouseX += mouse_increment;
 	mouse_increment = 1;
 	if (mouseX >= ScreenWidth) mouseX = ScreenWidth-1;
 }
 
-domouseleft()
+static void
+domouseleft(void)
 {
 	mouseX -= mouse_increment;
 	mouse_increment = 1;
 	if (mouseX < 0) mouseX = 0;
 }
 
-dosetmark()
+static void
+dosetmark(void)
 {
 	mousemark->beg_x = mouseX;
 	mousemark->beg_y = mouseY;
-	wmputwin(mousemark,top_win,FALSE);
-	mousemark_set = TRUE;
+	wmputwin(mousemark,top_win,0);
+	mousemark_set = 1;
 }
 
-doresetinput()
+static void
+doresetinput(void)
 {
 	if (!mouse_input_number) return;
 	mouse_input_number = 0;
@@ -2085,18 +2428,18 @@ doresetinput()
 	mouse_process_number = -1;
 }
 
-domousecreate()
+static void
+domousecreate(void)
 {
-	int lines,cols,begin_x,begin_y,w,p;
-	struct win_str *win;
+	int lines, cols, begin_x, begin_y, w, p;
 
 	mouse_increment = 1;
 	if (!mousemark_set) {
 		dosetmark();
-		wmcupos(mousewin,1,4,FALSE);
-		wmcleol(mousewin,FALSE);
-		wmcupos(mousewin,0,4,FALSE);
-		wmcleol(mousewin,FALSE);
+		wmcupos(mousewin,1,4,0);
+		wmcleol(mousewin,0);
+		wmcupos(mousewin,0,4,0);
+		wmcleol(mousewin,0);
 		mouse_input_number = 1;
 		mouse_input_window = 0;
 		mouse_input_page = 0;
@@ -2104,8 +2447,8 @@ domousecreate()
 	}
 	w = mouse_input_window;
 	p = mouse_input_page;
-	wmdel(mousemark,FALSE);
-	mousemark_set = FALSE;
+	wmdel(mousemark,0);
+	mousemark_set = 0;
 	doresetinput();
 
 	if (w < 0 || w >= MAX_WINDOWS) return;
@@ -2131,20 +2474,20 @@ domousecreate()
 		begin_y = mouseY;
 	}
 	if (winlist[w]) {
-		wmdel(winlist[w],FALSE);
+		wmdel(winlist[w],0);
 		wmfree(winlist[w]);
 	}
-	winlist[w] = wmmake(lines,cols,begin_y,begin_x,p,FALSE);
+	winlist[w] = wmmake(lines,cols,begin_y,begin_x,p,0);
 	if (statusmode) {
-	    wmaddstr(statuswin,"Create ",FALSE);
+	    wmaddstr(statuswin,"Create ",0);
 	    dowinfo(w);
 	}
 }
 
-dosearchwin(win)
-struct win_str *win;
+static int
+dosearchwin(struct win_str *win)
 {
-	register int w;
+	int w;
 
 	if (win == mousewin || win == mousemark) return -1;
 	for (w = 0; w < MAX_WINDOWS; w++)
@@ -2152,9 +2495,10 @@ struct win_str *win;
 	return -1;
 }
 
-domousedelete()
+static void
+domousedelete(void)
 {
-	int w,p;
+	int w, p;
 	struct win_str *win;
 	struct pro_str *proc;
 
@@ -2165,26 +2509,26 @@ domousedelete()
 	if (win == mousewin || win == mousemark || win == statuswin) return;
 	w = dosearchwin(win);
 	if (w == 0) return;
-	wmdel(win,FALSE);
+	wmdel(win,0);
 	wmfree(win);
 	if (w > 0) {
 	    winlist[w] = NULL;
 	    if (statusmode) {
-		wmaddstr(statuswin,"Delete window ",FALSE);
-		wmaddnum(statuswin,"%d\r\n",w,TRUE);
+		wmaddstr(statuswin,"Delete window ",0);
+		wmaddnum(statuswin,"%d\r\n",w,1);
 	    }
 	    for(p = 0; p < MAX_PROCESSES; p++) {
 		proc = prolist[p];
-		if (proc->pro_cur_win_num == w) {
+		if (proc && proc->pro_cur_win_num == w) {
 		    if (winlist[proc->pro_base_win_num])
 			proc->pro_cur_win_num = proc->pro_base_win_num;
 		    else proc->pro_cur_win_num = 0;
 		    if (statusmode) {
-			wmaddnum(statuswin,"Process %d",p,FALSE);
+			wmaddnum(statuswin,"Process %d",p,0);
 			wmaddstr(statuswin,"'s current window is forced to",
-					FALSE);
+					0);
 			wmaddnum(statuswin," %d\r\n",proc->pro_cur_win_num,
-					TRUE);
+					1);
 		    }
 		    proc->pro_cur_win = winlist[proc->pro_cur_win_num];
 	        }
@@ -2192,10 +2536,11 @@ domousedelete()
 	}
 }
 
-domousemove()
+static void
+domousemove(void)
 {
 	struct win_str *win;
-	int x,y;
+	int x, y;
 
 	mouse_increment = 1;
 	doresetinput();
@@ -2204,8 +2549,8 @@ domousemove()
 		dosetmark();
 		return;
 	}
-	wmdel(mousemark,FALSE);
-	mousemark_set = FALSE;
+	wmdel(mousemark,0);
+	mousemark_set = 0;
 
 	win = wmgetmap(mousemark->beg_y,mousemark->beg_x);
 	if (win != winlist[0]) {
@@ -2214,76 +2559,80 @@ domousemove()
 	}
 	else { x = win->beg_x; y = win->beg_y;}
 
-	wmrepos(win,top_win,y,x,FALSE);
+	wmrepos(win,top_win,y,x,0);
 }
 
-domousecopy()
+static void
+domousecopy(void)
 {
 	FILE *copy_file;
 
 	copy_file = fopen(mouse_copy_file,"a");
 	if (copy_file) {
-		if ((long) ftell(copy_file)) {
+		if (ftell(copy_file)) {
 			fputc(12,copy_file);
 		}
-		wmdel(mousewin,FALSE);
+		wmdel(mousewin,0);
 		if (mousemark_set) {
-			wmdel(mousemark,FALSE);
-			mousemark_set = FALSE;
+			wmdel(mousemark,0);
+			mousemark_set = 0;
 			doresetinput();
 		}
-		wmdel(mousemark,FALSE);
-		wmcopy(copy_file,TRUE);
+		wmdel(mousemark,0);
+		wmcopy(copy_file,1);
 		fclose(copy_file);
-		wmputwin(mousewin,top_win,TRUE);
+		wmputwin(mousewin,top_win,1);
 	}
 }
 
-domousenext()
+static void
+domousenext(void)
 {
 	struct win_str *wp;
-	int nls,ls;
+	int nls, ls;
 
 	wp = wmgetmap(mouseY,mouseX);
 	if (!wp) return;
 	if ((nls = wp->next_line->line_stack_length) == 0) return;
 	ls = (wp->max_y-wp->scroll_start) * mouse_increment;
 	if (ls > nls) ls = nls;
-	wmscroll(wp,ls);
+	wmscroll(wp,ls,0);
 	mouse_increment = 1;
 }
 
-domouseback()
+static void
+domouseback(void)
 {
 	struct win_str *wp;
-	int ls,pls;
+	int ls, pls;
 
 	wp = wmgetmap(mouseY,mouseX);
 	if (!wp) return;
 	if ((pls = wp->pre_line->line_stack_length) == 0) return;
 	ls = (wp->max_y-wp->scroll_start) * mouse_increment;
 	if (ls > pls) ls = pls;
-	wmscroll(wp,-ls);
+	wmscroll(wp,-ls,0);
 	mouse_increment = 1;
 }
 
-domousepush()
+static void
+domousepush(void)
 {
 	struct win_str *win;
-	int x,y;
 
 	mouse_increment = 1;
 	doresetinput();
 
 	win = wmgetmap(mouseY,mouseX);
 	if (!win) return;
-	if (win == winlist[0]) wmrepos(win,NULL,win->beg_y,win->beg_x,FALSE);
-	else wmrepos(win,winlist[0],win->beg_y,win->beg_x,FALSE);
+	if (win == winlist[0]) wmrepos(win,NULL,win->beg_y,win->beg_x,0);
+	else wmrepos(win,winlist[0],win->beg_y,win->beg_x,0);
 }
 
-domouseprocessselect()
+static void
+domouseprocessselect(void)
 {
-	int p,w;
+	int p, w;
 	struct win_str *win;
 
 	win = wmgetmap(mouseY,mouseX);
@@ -2301,7 +2650,8 @@ domouseprocessselect()
 	current_process_number = p;
 }
 
-domouseprocessnext()
+static void
+domouseprocessnext(void)
 {
 	int p;
 
@@ -2312,41 +2662,42 @@ domouseprocessnext()
 	current_process = prolist[p];
 }
 
-initmouse()
+static void
+initmouse(void)
 {
 	int f;
 
 	for (f = 0; f < 10+4+1; f++) {
 	    mouse_table[f].mouse_msg = NULL;
 	}
-	mouse_table[1].do_mouse = domousecreate;
+	mouse_table[1].do_mouse = (funcptr)domousecreate;
 	mouse_table[1].mouse_msg = "Create";
-	mouse_table[2].do_mouse = domousedelete;
+	mouse_table[2].do_mouse = (funcptr)domousedelete;
 	mouse_table[2].mouse_msg = "Delete";
-	mouse_table[3].do_mouse = domousemove;
+	mouse_table[3].do_mouse = (funcptr)domousemove;
 	mouse_table[3].mouse_msg = "Move";
-	mouse_table[4].do_mouse = domouseback;
+	mouse_table[4].do_mouse = (funcptr)domouseback;
 	mouse_table[4].mouse_msg = "Back";
-	mouse_table[5].do_mouse = domousenext;
+	mouse_table[5].do_mouse = (funcptr)domousenext;
 	mouse_table[5].mouse_msg = "Next";
-	mouse_table[6].do_mouse = domousepush;
+	mouse_table[6].do_mouse = (funcptr)domousepush;
 	mouse_table[6].mouse_msg = "Push";
-	mouse_table[7].do_mouse = domouseprocessselect;
+	mouse_table[7].do_mouse = (funcptr)domouseprocessselect;
 	mouse_table[7].mouse_msg = "PSelect";
-	mouse_table[8].do_mouse = domouseprocessnext;
+	mouse_table[8].do_mouse = (funcptr)domouseprocessnext;
 	mouse_table[8].mouse_msg = "PNext";
-	mouse_table[9].do_mouse = domousecopy;
+	mouse_table[9].do_mouse = (funcptr)domousecopy;
 	mouse_table[9].mouse_msg = "Copy";
-	mouse_table[10].do_mouse = domouseup;
-	mouse_table[11].do_mouse = domousedown;
-	mouse_table[12].do_mouse = domouseright;
-	mouse_table[13].do_mouse = domouseleft;
-	mouse_table[14].do_mouse = domousehome;
+	mouse_table[10].do_mouse = (funcptr)domouseup;
+	mouse_table[11].do_mouse = (funcptr)domousedown;
+	mouse_table[12].do_mouse = (funcptr)domouseright;
+	mouse_table[13].do_mouse = (funcptr)domouseleft;
+	mouse_table[14].do_mouse = (funcptr)domousehome;
 	mouse_flag = 01777;
 }
 
-initeachtbl(tbl)
-funcptr *tbl;
+static void
+initeachtbl(funcptr *tbl)
 {
 	int i;
 	for (i = 0; i <= 0177; i++) {
@@ -2362,7 +2713,8 @@ funcptr *tbl;
 	tbl['&'] = dosetoff;
 }
 
-inittbl()
+static void
+inittbl(void)
 {
 	int i;
 	for (i = 0; i <= 0177; i++) vi200table[i] = fin;
@@ -2435,4 +2787,3 @@ inittbl()
 	specialtable['k'] = dokillprocess;
 	specialtable['s'] = dostartprocess;
 }
-
