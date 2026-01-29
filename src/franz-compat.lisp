@@ -11,9 +11,11 @@
 
 (defun tyi (&optional (stream *standard-input*))
   "Read one character from stream (Franz Lisp TYpe In).
-   Returns character code as integer, or NIL on EOF."
-  (let ((ch (read-char stream nil nil)))
-    (when ch (char-code ch))))
+   Returns character code as integer, or -1 on EOF."
+  (let ((ch (read-char stream nil :eof)))
+    (if (eq ch :eof)
+        -1
+        (char-code ch))))
 
 (defun tyo (char-code &optional (stream *standard-output*))
   "Output one character to stream (Franz Lisp TYpe Out).
@@ -23,9 +25,11 @@
 
 (defun tyipeek (&optional (stream *standard-input*))
   "Peek at next character without consuming it.
-   Returns character code as integer."
-  (let ((ch (peek-char nil stream nil nil)))
-    (if ch (char-code ch) nil)))
+   Returns character code as integer, or -1 on EOF."
+  (let ((ch (peek-char nil stream nil :eof)))
+    (if (eq ch :eof)
+        -1
+        (char-code ch))))
 
 (defun ascii (n)
   "Convert integer to character (Franz Lisp ascii).
@@ -89,9 +93,10 @@
   (intern (coerce char-list 'string)))
 
 (defun maknam (char-list)
-  "Make name from list of characters (Franz Lisp).
-   Similar to IMPLODE but takes character codes."
-  (intern (coerce (mapcar #'code-char char-list) 'string)))
+  "Make name (string) from list of characters (Franz Lisp).
+   Takes a list of character codes and returns a string (NOT a symbol).
+   Use INTERN to convert the result to a symbol if needed."
+  (coerce (mapcar #'code-char char-list) 'string))
 
 (defun concat (&rest args)
   "Concatenate symbols/strings to create new symbol (Franz Lisp).
@@ -187,13 +192,21 @@
 
 (defun infile (filename)
   "Open file for input (Franz Lisp).
-   Returns input stream."
-  (open filename :direction :input :if-does-not-exist nil))
+   Returns input stream.
+   Accepts symbols, strings, or pathnames."
+  (let ((fname (if (symbolp filename)
+                   (symbol-name filename)
+                   filename)))
+    (open fname :direction :input :if-does-not-exist nil)))
 
 (defun outfile (filename)
   "Open file for output (Franz Lisp).
-   Returns output stream."
-  (open filename :direction :output :if-exists :supersede))
+   Returns output stream.
+   Accepts symbols, strings, or pathnames."
+  (let ((fname (if (symbolp filename)
+                   (symbol-name filename)
+                   filename)))
+    (open fname :direction :output :if-exists :supersede)))
 
 (defun filepos (stream &optional position)
   "Get or set file position (Franz Lisp).
@@ -205,17 +218,29 @@
 
 (defun probef (filename)
   "Test if file exists (Franz Lisp).
-   Returns the filename if it exists, NIL otherwise."
-  (when (probe-file filename)
-    filename))
+   Returns the filename if it exists, NIL otherwise.
+   Accepts symbols, strings, or pathnames."
+  (let ((fname (if (symbolp filename)
+                   (symbol-name filename)
+                   filename)))
+    (when (probe-file fname)
+      filename)))
 
 (defun fileopen (filename mode)
   "Open file in specified mode (Franz Lisp).
-   MODE can be 'r (read) or 'w (write)."
-  (case mode
-    (r (open filename :direction :input :if-does-not-exist nil))
-    (w (open filename :direction :output :if-exists :supersede))
-    (t (error "Unknown file mode: ~S" mode))))
+   MODE can be 'r (read) or 'w (write), or strings \"r\"/\"w\".
+   Accepts symbols or strings for both filename and mode."
+  (let* ((fname (if (symbolp filename)
+                    (symbol-name filename)
+                    filename))
+         (mode-str (if (stringp mode)
+                       (string-upcase mode)
+                       (string-upcase (symbol-name mode)))))
+    (cond ((string= mode-str "R")
+           (open fname :direction :input :if-does-not-exist nil))
+          ((string= mode-str "W")
+           (open fname :direction :output :if-exists :supersede))
+          (t (error "Unknown file mode: ~S" mode)))))
 
 (defvar *charcnt* 0
   "Character count for current output line")

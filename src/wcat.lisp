@@ -207,7 +207,7 @@
 		    (not (rletter ch)))
 	       (go dd)))
    ee   (rbtyi ch)
-	(return (intern (maknam (reverse chl))))
+	(return (intern (string-upcase (maknam (reverse chl))) :cpl))
    cc   (setq chl (cons ch chl))
 	(setq ch (rtyi pt))
 	(cond ((or (rletter ch) (rdigit ch)
@@ -229,11 +229,16 @@
 ;; paser
 
 (defun oread (tokl)
-  (prog (fn pt ok)
+  (prog (fn pt ok sys-fn)
 	(cond ((null tokl) (princ "No file name") (nterpri) (return nil)))
 	(setq fn (concatl tokl))
-	(cond ((null (probef fn))
-	       (princ "File dose not exist") (nterpri) (return nil)))
+	;; Try direct filename first, then system/ directory
+	(cond ((probef fn) t)
+	      ((progn
+	         (setq sys-fn (concat 'system/ fn))
+	         (probef sys-fn))
+	       (setq fn sys-fn))
+	      (t (princ "File dose not exist") (nterpri) (return nil)))
 	(rclear)
 	(setq pt (fileopen fn "r"))
    aa   (setq tokl (rtokl pt))
